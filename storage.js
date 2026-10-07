@@ -7,8 +7,16 @@ const Storage = (() => {
   const TOKEN_KEY = 'carnivore_jwt_token';
   const USER_KEY = 'carnivore_user_info';
   
-  // API URL: dynamically points to localhost:4000 in dev, or customizable for production Render URL
-  const API_URL = window.CARNIVORE_API_URL || 'http://localhost:4000/api';
+  const isLocalhost = Boolean(
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === '[::1]'
+  );
+
+  // Dynamic API URL: points to local server in development, or live Render backend on GitHub Pages
+  const API_URL = window.CARNIVORE_API_URL || (
+    isLocalhost ? 'http://localhost:4000/api' : 'https://carnivore-backend-fy84.onrender.com/api'
+  );
 
   const clone = (o) => JSON.parse(JSON.stringify(o));
 
