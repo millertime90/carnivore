@@ -37,7 +37,13 @@ app.use(express.static(path.join(__dirname, '..')));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    version: 'auth-fix-2',
+    uptimeSeconds: Math.round(process.uptime()),
+    commit: process.env.RENDER_GIT_COMMIT || 'local',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ───────── Authentication Endpoints ─────────
