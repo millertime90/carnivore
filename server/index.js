@@ -71,7 +71,7 @@ app.post('/api/auth/google', async (req, res) => {
     const { credential, customUsername } = req.body;
     console.log('Incoming /api/auth/google request, customUsername:', customUsername);
     const result = await authenticateGoogle(credential, customUsername);
-    console.log('Google Auth Result: isNewUser =', result.isNewUser, 'username =', result.user.username);
+    console.log('Google Auth Result: isNewUser =', result.isNewUser, 'username =', result.user ? result.user.username : result.suggestedUsername);
     res.json(result);
   } catch (err) {
     console.error('Google Auth Error:', err.message);
