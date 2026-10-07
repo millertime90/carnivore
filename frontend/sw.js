@@ -1,4 +1,4 @@
-const CACHE_NAME = 'carnivore-app-v1';
+const CACHE_NAME = 'carnivore-app-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -12,8 +12,9 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
   );
 });
 
@@ -25,8 +26,22 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Network-First with Cache Fallback: ensures latest code while supporting offline use
 self.addEventListener('fetch', (event) => {
+  // Never intercept or cache backend API calls
+  if (event.request.method !== 'GET' || event.request.url.includes('/api/')) {
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((response) => response || fetch(event.request))
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const clone = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return networkResponse;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

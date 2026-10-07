@@ -38,6 +38,32 @@
     toast.timer = setTimeout(() => t.classList.remove('show'), 2600);
   }
 
+  function showConfirm(title, message, confirmText = 'Confirm', isDanger = false) {
+    return new Promise((resolve) => {
+      const modal = $('#confirmModal');
+      $('#confirmModalTitle').textContent = title;
+      $('#confirmModalMessage').textContent = message;
+      const acceptBtn = $('#acceptConfirmModal');
+      acceptBtn.textContent = confirmText;
+      acceptBtn.className = isDanger ? 'btn danger sm' : 'btn primary sm';
+
+      const onConfirm = () => { cleanup(); resolve(true); };
+      const onCancel = () => { cleanup(); resolve(false); };
+
+      function cleanup() {
+        modal.hidden = true;
+        acceptBtn.removeEventListener('click', onConfirm);
+        $('#cancelConfirmModal').removeEventListener('click', onCancel);
+        $('#closeConfirmModal').removeEventListener('click', onCancel);
+      }
+
+      acceptBtn.addEventListener('click', onConfirm);
+      $('#cancelConfirmModal').addEventListener('click', onCancel);
+      $('#closeConfirmModal').addEventListener('click', onCancel);
+      modal.hidden = false;
+    });
+  }
+
   // ───────── Derived info ─────────
   function zincStatus() {
     const days = sortedDays();
@@ -88,10 +114,13 @@
     $('#stackGrid').innerHTML = STACK.map(
       (g, i) => `
       <article class="card stack-card">
-        <span class="step">STEP ${i + 1}</span>
-        <header>
+        <div class="stack-top">
           <span class="icon">${g.icon}</span>
-          <div><h3>${esc(g.title)}</h3><span class="when">${esc(g.when)}</span></div>
+          <span class="step">STEP ${i + 1}</span>
+        </div>
+        <header>
+          <h3>${esc(g.title)}</h3>
+          <span class="when">${esc(g.when)}</span>
         </header>
         <ul class="stack-items">
           ${g.items
@@ -774,11 +803,19 @@
         if (day) fillForm(day);
       } else if (delId) {
         const day = journal.days.find((d) => d.id === delId);
-        if (day && confirm(`Delete Day ${day.dayNumber}? This can't be undone (export first if unsure).`)) {
-          journal = await Storage.deleteDay(delId);
-          if (editingId === delId) resetForm();
-          renderAll();
-          toast(`Day ${day.dayNumber} deleted.`);
+        if (day) {
+          const ok = await showConfirm(
+            'Delete Day',
+            `Delete Day ${day.dayNumber}? This cannot be undone (export first if unsure).`,
+            'Delete',
+            true
+          );
+          if (ok) {
+            journal = await Storage.deleteDay(delId);
+            if (editingId === delId) resetForm();
+            renderAll();
+            toast(`Day ${day.dayNumber} deleted.`);
+          }
         }
       }
     });
@@ -840,24 +877,276 @@
       try {
         const data = JSON.parse(await file.text());
         if (!Array.isArray(data.days)) throw new Error('missing "days" array');
-        if (!confirm(`Replace current journal with ${data.days.length} day(s) from "${file.name}"?`)) return;
+        const ok = await showConfirm(
+          'Import Journal',
+          `Replace current journal with ${data.days.length} day(s) from "${file.name}"? This will overwrite current entries and sync to your account.`,
+          'Import',
+          false
+        );
+        if (!ok) return;
         journal = await Storage.replaceAll({ version: 1, meta: {}, ...data });
         renderAll();
         resetForm();
-        toast('Journal imported.');
+        toast('Journal imported successfully.');
       } catch (err) {
         toast(`⚠ Import failed: ${err.message}`);
       }
     });
 
     $('#resetBtn').addEventListener('click', async () => {
-      if (!confirm('Reset everything to the original text log? Days you added will be lost (export first if unsure).')) return;
+      const ok = await showConfirm(
+        'Reset Journal',
+        'Reset everything to the original clean template? Any days you have added will be cleared (export first if unsure).',
+        'Reset',
+        true
+      );
+      if (!ok) return;
       journal = await Storage.reset();
       editingPattern = editingSummary = false;
       renderAll();
       resetForm();
-      toast('Reset to original log.');
+      toast('Reset to blank template.');
     });
+
+    // ───────── Auth Modal & Session Events ─────────
+    const authModal = $('#authModal');
+    const authBtn = $('#authBtn');
+    const closeAuthModal = $('#closeAuthModal');
+    const tabLogin = $('#tabLogin');
+    const tabSignup = $('#tabSignup');
+    const authForm = $('#authForm');
+    const authSubmitBtn = $('#authSubmitBtn');
+    const emailField = $('#emailField');
+    const loggedInView = $('#loggedInView');
+    const loggedOutView = $('#loggedOutView');
+    const googleUsernameView = $('#googleUsernameView');
+    const googleAuthBtn = $('#googleAuthBtn');
+    const confirmGoogleUsernameBtn = $('#confirmGoogleUsernameBtn');
+    const logoutBtn = $('#logoutBtn');
+
+    let isSignupMode = false;
+    let pendingGoogleCredential = null;
+
+    function updateAuthNav() {
+      const user = Storage.getUser();
+      if (user) {
+        authBtn.textContent = `👤 ${user.username}`;
+        authBtn.title = `Logged in as ${user.username}`;
+      } else {
+        authBtn.textContent = '👤 Account';
+        authBtn.title = 'Sign In or Create Account';
+      }
+    }
+
+    function renderAuthModal() {
+      const user = Storage.getUser();
+      if (user) {
+        loggedInView.hidden = false;
+        loggedOutView.hidden = true;
+        googleUsernameView.hidden = true;
+        $('#userDisplayName').textContent = user.username;
+        $('#userEmail').textContent = user.email || 'No email attached';
+        $('#userAvatar').textContent = user.username.slice(0, 1).toUpperCase() || '🥩';
+      } else {
+        loggedInView.hidden = true;
+        loggedOutView.hidden = false;
+        googleUsernameView.hidden = true;
+      }
+    }
+
+    authBtn.addEventListener('click', () => {
+      renderAuthModal();
+      authModal.hidden = false;
+      setTimeout(initGoogleClient, 50);
+    });
+
+    closeAuthModal.addEventListener('click', () => {
+      authModal.hidden = true;
+    });
+
+    authModal.addEventListener('click', (e) => {
+      if (e.target === authModal) authModal.hidden = true;
+    });
+
+    tabLogin.addEventListener('click', () => {
+      isSignupMode = false;
+      tabLogin.classList.add('active');
+      tabSignup.classList.remove('active');
+      emailField.hidden = true;
+      authSubmitBtn.textContent = 'Log In';
+    });
+
+    tabSignup.addEventListener('click', () => {
+      isSignupMode = true;
+      tabSignup.classList.add('active');
+      tabLogin.classList.remove('active');
+      emailField.hidden = false;
+      authSubmitBtn.textContent = 'Create Account';
+    });
+
+    // Manual Login / Signup submission
+    authForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = $('#authUsername').value.trim();
+      const password = $('#authPassword').value;
+      const email = $('#authEmail').value.trim();
+
+      try {
+        if (isSignupMode) {
+          await Storage.signupManual(username, password, email || null);
+          toast(`Account created! Welcome, ${username}.`);
+        } else {
+          await Storage.loginManual(username, password);
+          toast(`Welcome back, ${username}!`);
+        }
+        updateAuthNav();
+        journal = await Storage.load();
+        renderAll();
+        authModal.hidden = true;
+        authForm.reset();
+      } catch (err) {
+        toast(`⚠ ${err.message}`);
+      }
+    });
+
+    const optGoogleName = $('#optGoogleName');
+    const optCustomName = $('#optCustomName');
+    const customUsernameInputWrap = $('#customUsernameInputWrap');
+    const cancelGoogleBtn = $('#cancelGoogleBtn');
+    const googleNamePreview = $('#googleNamePreview');
+    let currentGooglePayload = null;
+
+    optGoogleName.addEventListener('change', () => {
+      customUsernameInputWrap.hidden = true;
+    });
+
+    optCustomName.addEventListener('change', () => {
+      customUsernameInputWrap.hidden = false;
+      $('#googleCustomUsername').focus();
+    });
+
+    cancelGoogleBtn.addEventListener('click', () => {
+      googleUsernameView.hidden = true;
+      loggedOutView.hidden = false;
+      pendingGoogleCredential = null;
+    });
+
+    const GOOGLE_CLIENT_ID = '485627779695-pt90c7v33pqvhfisndkic4f5aa7sqmpa.apps.googleusercontent.com';
+
+    // Parse payload from Google ID token JWT (base64url format)
+    function parseJwtPayload(token) {
+      try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+          atob(base64)
+            .split('')
+            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+            .join('')
+        );
+        return JSON.parse(jsonPayload);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Handle Google credential callback
+    async function handleGoogleCredential(credential) {
+      pendingGoogleCredential = credential;
+
+      try {
+        // Send token to server without custom handle to check if account already exists
+        const res = await Storage.authGoogle(credential, null);
+
+        // If existing user, log them in immediately!
+        if (!res.isNewUser) {
+          toast(`Welcome back, ${res.user.username}!`);
+          updateAuthNav();
+          journal = await Storage.load();
+          renderAll();
+          authModal.hidden = true;
+          return;
+        }
+
+        // Only if it's a NEW user signup, show username choice
+        const payload = parseJwtPayload(credential) || {};
+        const googleName = res.googleName || payload.name || payload.given_name || 'carnivore_user';
+        const googleEmail = res.email || payload.email || '';
+        const suggested = res.suggestedUsername || 'carnivore_user';
+
+        googleNamePreview.textContent = `${googleName}${googleEmail ? ` (${googleEmail})` : ''}`;
+        $('#googleCustomUsername').value = suggested;
+        optGoogleName.checked = true;
+        customUsernameInputWrap.hidden = true;
+
+        loggedOutView.hidden = true;
+        googleUsernameView.hidden = false;
+      } catch (err) {
+        toast(`⚠ ${err.message}`);
+      }
+    }
+
+    // Initialize Google Identity Services with FedCM support
+    function initGoogleClient() {
+      if (window.google && window.google.accounts && window.google.accounts.id) {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          use_fedcm_for_prompt: true,
+          callback: (response) => {
+            if (response.credential) {
+              handleGoogleCredential(response.credential);
+            }
+          },
+        });
+
+        const btnContainer = $('#googleButtonContainer');
+        if (btnContainer && btnContainer.children.length === 0) {
+          window.google.accounts.id.renderButton(btnContainer, {
+            theme: 'filled_blue',
+            size: 'large',
+            shape: 'pill',
+            text: 'continue_with',
+            width: 300,
+          });
+        }
+      }
+    }
+
+    confirmGoogleUsernameBtn.addEventListener('click', async () => {
+      const isCustom = optCustomName.checked;
+      const customHandle = $('#googleCustomUsername').value.trim();
+
+      if (isCustom && !customHandle) {
+        return toast('Please enter a custom username.');
+      }
+
+      const chosenUsername = isCustom ? customHandle : $('#googleCustomUsername').value.trim();
+
+      try {
+        const res = await Storage.authGoogle(pendingGoogleCredential, chosenUsername);
+        toast(`Signed in as ${res.user.username}!`);
+        updateAuthNav();
+        journal = await Storage.load();
+        renderAll();
+        authModal.hidden = true;
+      } catch (err) {
+        toast(`⚠ ${err.message}`);
+      }
+    });
+
+    logoutBtn.addEventListener('click', async () => {
+      Storage.logout();
+      updateAuthNav();
+      journal = await Storage.load();
+      editingPattern = editingSummary = false;
+      renderAll();
+      resetForm();
+      authModal.hidden = true;
+      toast('Logged out. Switched to clean slate.');
+    });
+
+    // Check existing session on boot
+    Storage.checkSession().then(() => updateAuthNav());
   }
 
   // ───────── Init ─────────

@@ -1,15 +1,18 @@
 /*
- * Storage adapter.
- * Every method is async and returns plain data so the UI never touches
- * localStorage directly. When the backend exists, replace the bodies of
- * these methods with fetch() calls to the matching endpoints — app.js
- * will not need to change.
+ * Storage & Auth Adapter.
+ * Bridges local storage and remote backend server sync.
  */
 const Storage = (() => {
   const KEY = 'carnivoreJournal.v1';
+  const TOKEN_KEY = 'carnivore_jwt_token';
+  const USER_KEY = 'carnivore_user_info';
+  
+  // API URL: dynamically points to localhost:4000 in dev, or customizable for production Render URL
+  const API_URL = window.CARNIVORE_API_URL || 'http://localhost:4000/api';
+
   const clone = (o) => JSON.parse(JSON.stringify(o));
 
-  function read() {
+  function readLocal() {
     try {
       const raw = localStorage.getItem(KEY);
       return raw ? JSON.parse(raw) : null;
@@ -18,53 +21,191 @@ const Storage = (() => {
     }
   }
 
-  function write(data) {
+  function writeLocal(data) {
     localStorage.setItem(KEY, JSON.stringify(data));
     return clone(data);
   }
 
-  function current() {
-    return read() || clone(SEED_JOURNAL);
+  function currentLocal() {
+    return readLocal() || clone(SEED_JOURNAL);
+  }
+
+  function getToken() {
+    return localStorage.getItem(TOKEN_KEY);
+  }
+
+  function getUser() {
+    try {
+      const u = localStorage.getItem(USER_KEY);
+      return u ? JSON.parse(u) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function setAuth(user, token) {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+  }
+
+  function clearAuth() {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  }
+
+  // Helper to make authenticated API requests
+  async function apiFetch(endpoint, options = {}) {
+    const token = getToken();
+    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    try {
+      const res = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Server request failed');
+      return data;
+    } catch (err) {
+      console.warn(`API call ${endpoint} failed:`, err.message);
+      throw err;
+    }
   }
 
   return {
-    /** Load the whole journal (seeds it on first run). */
-    async load() {
-      const data = read();
-      return data ? data : write(clone(SEED_JOURNAL));
+    // ───────── Auth Methods ─────────
+    getUser,
+    isLoggedIn() {
+      return !!getToken();
     },
 
-    /** Create or update a day entry (matched by id). */
+    async signupManual(username, password, email) {
+      const res = await apiFetch('/auth/signup', {
+        method: 'POST',
+        body: JSON.stringify({ username, password, email }),
+      });
+      setAuth(res.user, res.token);
+      // Sync local data up to user account immediately
+      await this.syncRemote(currentLocal());
+      return res.user;
+    },
+
+    async loginManual(username, password) {
+      const res = await apiFetch('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      });
+      setAuth(res.user, res.token);
+      // Pull user's saved cloud journal if it exists
+      await this.pullRemote();
+      return res.user;
+    },
+
+    async authGoogle(credential, customUsername = null) {
+      const res = await apiFetch('/auth/google', {
+        method: 'POST',
+        body: JSON.stringify({ credential, customUsername }),
+      });
+      if (res.token && res.user) {
+        setAuth(res.user, res.token);
+      }
+      if (!res.isNewUser) {
+        await this.pullRemote();
+      } else if (res.token) {
+        await this.syncRemote(currentLocal());
+      }
+      return res;
+    },
+
+    async checkSession() {
+      if (!getToken()) return null;
+      try {
+        const res = await apiFetch('/auth/me');
+        setAuth(res.user, getToken());
+        return res.user;
+      } catch {
+        clearAuth();
+        return null;
+      }
+    },
+
+    logout() {
+      clearAuth();
+      // Reset local journal to blank template on logout so user data is not left behind
+      writeLocal(clone(SEED_JOURNAL));
+    },
+
+    // ───────── Cloud Journal Sync ─────────
+    async syncRemote(journal) {
+      if (!getToken()) return;
+      try {
+        await apiFetch('/journal', {
+          method: 'PUT',
+          body: JSON.stringify(journal),
+        });
+      } catch (e) {
+        console.warn('Background sync failed:', e.message);
+      }
+    },
+
+    async pullRemote() {
+      if (!getToken()) return null;
+      try {
+        const res = await apiFetch('/journal');
+        if (res && res.journal && Array.isArray(res.journal.days)) {
+          writeLocal(res.journal);
+          return res.journal;
+        }
+      } catch (e) {
+        console.warn('Pull remote failed:', e.message);
+      }
+      return null;
+    },
+
+    // ───────── Journal Methods ─────────
+    async load() {
+      if (getToken()) {
+        const remote = await this.pullRemote();
+        if (remote) return remote;
+      }
+      const data = readLocal();
+      return data ? data : writeLocal(clone(SEED_JOURNAL));
+    },
+
     async saveDay(day) {
-      const data = current();
+      const data = currentLocal();
       const i = data.days.findIndex((d) => d.id === day.id);
       if (i >= 0) data.days[i] = day;
       else data.days.push(day);
-      return write(data);
+      const saved = writeLocal(data);
+      await this.syncRemote(saved);
+      return saved;
     },
 
-    /** Delete a day entry by id. */
     async deleteDay(id) {
-      const data = current();
+      const data = currentLocal();
       data.days = data.days.filter((d) => d.id !== id);
-      return write(data);
+      const saved = writeLocal(data);
+      await this.syncRemote(saved);
+      return saved;
     },
 
-    /** Save overall pattern notes / summary. */
     async saveMeta(meta) {
-      const data = current();
+      const data = currentLocal();
       data.meta = { ...data.meta, ...meta };
-      return write(data);
+      const saved = writeLocal(data);
+      await this.syncRemote(saved);
+      return saved;
     },
 
-    /** Replace everything (used by Import). */
     async replaceAll(journal) {
-      return write(journal);
+      const saved = writeLocal(journal);
+      await this.syncRemote(saved);
+      return saved;
     },
 
-    /** Restore the original seed data from the text log. */
     async reset() {
-      return write(clone(SEED_JOURNAL));
+      const saved = writeLocal(clone(SEED_JOURNAL));
+      await this.syncRemote(saved);
+      return saved;
     },
   };
 })();

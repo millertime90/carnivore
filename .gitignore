@@ -1,2 +1,13 @@
 carnivore_stack_log.txt
 *.json
+!manifest.json
+!frontend/manifest.json
+!package.json
+!server/package.json
+!package-lock.json
+!server/package-lock.json
+node_modules/
+server/node_modules/
+server/*.db*
+.env
+server/.env

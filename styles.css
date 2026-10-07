@@ -85,18 +85,21 @@ main { max-width: 1150px; margin: 0 auto; padding: 0 1.25rem 3rem; }
 
 /* ── Stack ── */
 .stack-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
-.stack-card { padding: 1rem 1.1rem; position: relative; }
-.stack-card .step {
-  position: absolute; top: 0.8rem; right: 1rem; color: var(--muted); font-size: 0.75rem; font-weight: 700;
-}
-.stack-card header { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; }
+.stack-card { padding: 1rem 1.1rem; display: flex; flex-direction: column; }
+.stack-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
 .stack-card .icon {
   font-size: 1.4rem; width: 2.4rem; height: 2.4rem; display: grid; place-items: center;
-  background: var(--card-2); border-radius: 10px;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 10px;
 }
-.stack-card h3 { font-size: 1.05rem; }
-.when { color: var(--accent-2); font-size: 0.8rem; font-weight: 600; }
-.stack-items { list-style: none; padding: 0; }
+.stack-card .step {
+  color: var(--accent-2); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+}
+.stack-card header { margin-bottom: 0.85rem; }
+.stack-card h3 { font-size: 1.1rem; line-height: 1.3; margin-bottom: 0.2rem; }
+.when { color: var(--accent-2); font-size: 0.82rem; font-weight: 600; }
+.stack-items { list-style: none; padding: 0; margin-top: auto; }
 .stack-items li {
   display: grid; grid-template-columns: 1fr auto; gap: 0 0.75rem;
   padding: 0.45rem 0; border-top: 1px dashed var(--line);
@@ -261,10 +264,53 @@ textarea { resize: vertical; }
 }
 .toast.show { transform: translateX(-50%) translateY(0); }
 
-/* ── Responsive ── */
-@media (max-width: 720px) {
-  .row-head { display: none; }
-  .supp-row, .meal-row, .sym-row, .act-row { grid-template-columns: 1fr 1fr; padding: 0.6rem; border: 1px solid var(--line); border-radius: 10px; }
-  .row .icon-btn { justify-self: end; }
-  .grid-drink { grid-template-columns: 1fr; }
+/* ── Modal & Auth ── */
+.account-btn { margin-left: 0.5rem; }
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7);
+  display: grid; place-items: center; z-index: 100; padding: 1rem;
 }
+.modal-backdrop[hidden] { display: none !important; }
+.modal-content {
+  width: 100%; max-width: 420px; padding: 1.5rem; position: relative;
+  border: 1px solid var(--line); border-radius: var(--radius);
+}
+.modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; }
+.modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.auth-tabs { display: flex; border-bottom: 1px solid var(--line); margin-bottom: 1.25rem; gap: 0.5rem; }
+.auth-tab {
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); font: inherit; font-weight: 600; padding: 0.5rem 1rem; cursor: pointer;
+}
+.auth-tab.active { color: var(--accent-2); border-bottom-color: var(--accent-2); }
+.google-auth-box { margin-bottom: 1rem; }
+.google-btn {
+  width: 100%; justify-content: center; background: #ffffff; color: #3c4043;
+  font-weight: 600; border-color: #dadce0;
+}
+.google-btn:hover { background: #f8f9fa; border-color: #dadce0; }
+.auth-divider {
+  display: flex; align-items: center; text-align: center; margin: 1rem 0;
+  color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.auth-divider::before, .auth-divider::after { content: ''; flex: 1; border-bottom: 1px solid var(--line); }
+.auth-divider span { padding: 0 0.5rem; }
+.user-profile { display: flex; align-items: center; gap: 0.85rem; padding: 0.75rem 0; }
+.user-avatar {
+  width: 44px; height: 44px; border-radius: 50%; background: var(--card-2);
+  display: grid; place-items: center; font-size: 1.4rem; border: 1px solid var(--line);
+}
+.username-options { display: grid; gap: 0.65rem; }
+.username-option-card {
+  display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px;
+  cursor: pointer; transition: border-color 0.2s, background 0.2s;
+}
+.username-option-card:hover { border-color: var(--accent); }
+.username-option-card:has(input:checked) {
+  border-color: var(--accent-2); background: rgba(242, 165, 65, 0.08);
+}
+.username-option-card input[type="radio"] { width: 1.15rem; height: 1.15rem; accent-color: var(--accent-2); }
+.option-content { display: grid; gap: 0.15rem; }
+
+

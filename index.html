@@ -10,7 +10,8 @@
   <meta name="apple-mobile-web-app-title" content="Carnivore" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=3" />
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <header class="hero">
@@ -28,6 +29,7 @@
       <a href="#pattern">Overall Pattern</a>
       <a href="#summary">Summary</a>
       <a href="#log" class="cta">+ Log a Day</a>
+      <button class="btn ghost sm account-btn" id="authBtn" type="button">👤 Account</button>
     </nav>
   </header>
 
@@ -203,6 +205,117 @@
     <p class="muted small">Data source: carnivore_stack_log.txt · stored locally in your browser</p>
   </footer>
 
+  <!-- ───────── Auth Modal ───────── -->
+  <div class="modal-backdrop" id="authModal" hidden>
+    <div class="card modal-content" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+      <div class="modal-head">
+        <h3 id="authTitle">Account &amp; Sync</h3>
+        <button class="icon-btn close-modal" id="closeAuthModal" type="button" aria-label="Close">✕</button>
+      </div>
+
+      <!-- Logged In View -->
+      <div id="loggedInView" hidden>
+        <div class="user-profile">
+          <div class="user-avatar" id="userAvatar">🥩</div>
+          <div>
+            <h4 id="userDisplayName">User</h4>
+            <p class="muted small" id="userEmail"></p>
+          </div>
+        </div>
+        <p class="small muted" style="margin: 0.75rem 0;">Your daily logs and stats are synced to your account.</p>
+        <div class="modal-actions">
+          <button class="btn ghost danger sm" id="logoutBtn" type="button">Log Out</button>
+        </div>
+      </div>
+
+      <!-- Logged Out View (Tabs for Login / Signup) -->
+      <div id="loggedOutView">
+        <div class="auth-tabs">
+          <button class="auth-tab active" id="tabLogin" type="button">Log In</button>
+          <button class="auth-tab" id="tabSignup" type="button">Sign Up</button>
+        </div>
+
+        <!-- Google Auth Option -->
+        <div class="google-auth-box">
+          <div id="googleButtonContainer" style="display: flex; justify-content: center; width: 100%;"></div>
+        </div>
+
+        <div class="auth-divider"><span>or with username</span></div>
+
+        <!-- Manual Form -->
+        <form id="authForm" autocomplete="off">
+          <label>Username
+            <input type="text" id="authUsername" required placeholder="Choose a username" autocomplete="username" />
+          </label>
+          <div id="emailField" hidden>
+            <label>Email <span class="muted small">(optional)</span>
+              <input type="email" id="authEmail" placeholder="your@email.com" autocomplete="email" />
+            </label>
+          </div>
+          <label>Password
+            <input type="password" id="authPassword" required minlength="6" placeholder="At least 6 characters" autocomplete="current-password" />
+          </label>
+          <div class="modal-actions" style="margin-top: 1rem;">
+            <button class="btn primary" id="authSubmitBtn" type="submit">Log In</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Google Username Prompt (Clean custom UI instead of browser alert/prompt) -->
+      <div id="googleUsernameView" hidden>
+        <div style="text-align: center; margin-bottom: 1.25rem;">
+          <div style="font-size: 2rem; margin-bottom: 0.25rem;">🥩</div>
+          <h4>Choose Your Username</h4>
+          <p class="muted small">How would you like to appear on your Carnivore journey?</p>
+        </div>
+
+        <div class="username-options">
+          <label class="username-option-card">
+            <input type="radio" name="usernameChoice" value="google" id="optGoogleName" checked />
+            <div class="option-content">
+              <strong>Use Google Name</strong>
+              <span class="muted small" id="googleNamePreview">Display Name</span>
+            </div>
+          </label>
+
+          <label class="username-option-card">
+            <input type="radio" name="usernameChoice" value="custom" id="optCustomName" />
+            <div class="option-content">
+              <strong>Custom Username</strong>
+              <span class="muted small">Create a custom handle</span>
+            </div>
+          </label>
+        </div>
+
+        <div id="customUsernameInputWrap" style="margin-top: 1rem;" hidden>
+          <label>Custom Handle
+            <input type="text" id="googleCustomUsername" placeholder="e.g. CarnivoreWarrior" maxlength="30" />
+          </label>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 1.25rem;">
+          <button class="btn ghost sm" id="cancelGoogleBtn" type="button">Back</button>
+          <button class="btn primary" id="confirmGoogleUsernameBtn" type="button">Continue to App</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────── Custom Confirmation Modal ───────── -->
+  <div class="modal-backdrop" id="confirmModal" hidden>
+    <div class="card modal-content" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+      <div class="modal-head">
+        <h3 id="confirmModalTitle">Please Confirm</h3>
+        <button class="icon-btn close-modal" id="closeConfirmModal" type="button" aria-label="Close">✕</button>
+      </div>
+      <p id="confirmModalMessage" style="margin: 0.5rem 0 1.25rem; font-size: 0.95rem; line-height: 1.5; color: var(--text);"></p>
+      <div class="modal-actions">
+        <button class="btn ghost sm" id="cancelConfirmModal" type="button">Cancel</button>
+        <button class="btn primary sm" id="acceptConfirmModal" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <datalist id="activityTypes">
@@ -215,13 +328,15 @@
     <option value="Sports"></option>
   </datalist>
 
-  <script src="data.js"></script>
-  <script src="storage.js"></script>
-  <script src="app.js"></script>
+  <script src="data.js?v=3"></script>
+  <script src="storage.js?v=3"></script>
+  <script src="app.js?v=3"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').catch(() => {});
+        navigator.serviceWorker.register('sw.js?v=3').then((reg) => {
+          reg.update();
+        }).catch(() => {});
       });
     }
   </script>
