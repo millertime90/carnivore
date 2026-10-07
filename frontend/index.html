@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Carnivore Journey — Stack & Daily Log</title>
+  <meta name="theme-color" content="#2b1410" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Carnivore" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div>
+        <p class="eyebrow">Carnivore Journey</p>
+        <h1>Stack &amp; Daily Log</h1>
+        <p class="sub">Daily routine, day-by-day entries, patterns, and summary — all in one place.</p>
+      </div>
+      <div class="stats" id="stats"><!-- rendered by app.js --></div>
+    </div>
+    <nav class="tabs">
+      <a href="#stack">Daily Stack</a>
+      <a href="#days">Days</a>
+      <a href="#pattern">Overall Pattern</a>
+      <a href="#summary">Summary</a>
+      <a href="#log" class="cta">+ Log a Day</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ───────── Daily Stack ───────── -->
+    <section id="stack" class="section">
+      <div class="section-head">
+        <h2>⭐ Daily Stack</h2>
+        <p class="muted">The routine template, in order through the day.</p>
+      </div>
+      <div class="stack-grid" id="stackGrid"></div>
+    </section>
+
+    <!-- ───────── Day entries ───────── -->
+    <section id="days" class="section">
+      <div class="section-head">
+        <h2>⭐ Day Entries <span class="count" id="dayCount">0</span></h2>
+        <div class="head-actions">
+          <button class="btn ghost sm" id="expandAll" type="button">Expand all</button>
+          <button class="btn ghost sm" id="collapseAll" type="button">Collapse all</button>
+        </div>
+      </div>
+      <div id="dayList" class="day-list"></div>
+    </section>
+
+    <!-- ───────── Overall pattern ───────── -->
+    <section id="pattern" class="section">
+      <div class="section-head">
+        <h2>⭐ Overall Pattern <span class="muted small" id="patternRange"></span></h2>
+        <button class="btn ghost sm" id="editPattern" type="button">Edit notes</button>
+      </div>
+
+      <div class="card table-card">
+        <h3>At a glance <span class="muted small">(auto-generated from entries)</span></h3>
+        <div class="table-wrap"><table id="patternTable"></table></div>
+      </div>
+
+      <div class="insights" id="insights"></div>
+      <div class="notes-grid" id="patternNotes"></div>
+    </section>
+
+    <!-- ───────── Summary ───────── -->
+    <section id="summary" class="section">
+      <div class="section-head">
+        <h2>⭐ Overall Carnivore Summary</h2>
+        <div class="head-actions">
+          <button class="btn ghost sm" id="downloadTxtSummary" type="button">📄 Download Summary (.txt)</button>
+          <button class="btn ghost sm" id="editSummary" type="button">Custom note</button>
+          <button class="btn ghost sm" id="resetAutoSummary" type="button" hidden>↺ Live Auto-Summary</button>
+        </div>
+      </div>
+      <div class="card summary-card">
+        <div class="summary-meta-badge" id="summaryModeBadge"></div>
+        <div id="summaryBody"></div>
+        <p class="auto-line" id="summaryAuto"></p>
+      </div>
+    </section>
+
+    <!-- ───────── Log a day form ───────── -->
+    <section id="log" class="section">
+      <div class="section-head">
+        <h2 id="formTitle">➕ Log a Day</h2>
+        <p class="muted">Saved in this browser for now (backend coming later).</p>
+      </div>
+
+      <form id="dayForm" class="card form" autocomplete="off" novalidate>
+        <!-- Check-in -->
+        <fieldset>
+          <legend>📅 Daily Check-in</legend>
+          <div class="grid-3">
+            <label>Day #
+              <input type="number" name="dayNumber" min="1" required />
+            </label>
+            <label>Date
+              <input type="date" name="date" />
+            </label>
+            <label class="check-inline">
+              <input type="checkbox" name="onPlan" checked /> Stayed on plan
+            </label>
+          </div>
+          <div class="grid-2">
+            <div>
+              <span class="label">Hunger</span>
+              <div class="segmented" data-group="hunger"></div>
+            </div>
+            <div>
+              <span class="label">Energy / Mood</span>
+              <div class="segmented" data-group="energy"></div>
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- Supplements -->
+        <fieldset>
+          <legend>💊 Supplement Intake</legend>
+          <p class="hint" id="zincHint"></p>
+          <div id="suppList" class="rows"></div>
+          <button type="button" class="btn ghost sm" id="addSupp">+ Add other supplement</button>
+        </fieldset>
+
+        <!-- Food -->
+        <fieldset>
+          <legend>🥩 Food Intake</legend>
+          <div class="grid-drink">
+            <label>Pre-meal drink
+              <input type="text" name="drink" placeholder="e.g. Bone broth + L-glutamine + creatine in lightly salted water" />
+            </label>
+            <label>Water (fl oz)
+              <input type="text" name="waterOz" placeholder="30–40" />
+            </label>
+          </div>
+          <div class="row-head meal-head">
+            <span>Meal</span><span>Steak (oz)</span><span>Eggs</span><span>Butter (tbsp)</span><span>Notes</span><span></span>
+          </div>
+          <div id="mealList" class="rows"></div>
+          <button type="button" class="btn ghost sm" id="addMeal">+ Add meal</button>
+          <label>Food notes
+            <textarea name="foodNotes" rows="2" placeholder="Anything else you ate or drank…"></textarea>
+          </label>
+        </fieldset>
+
+        <!-- Symptoms -->
+        <fieldset>
+          <legend>🩺 Symptoms</legend>
+          <div class="chips" id="symChips"></div>
+          <div class="row-head sym-head">
+            <span>Symptom</span><span>Severity</span><span>Notes (duration, frequency…)</span><span></span>
+          </div>
+          <div id="symList" class="rows"></div>
+          <button type="button" class="btn ghost sm" id="addSym">+ Add symptom</button>
+          <label>General symptom notes
+            <textarea name="symptomNotes" rows="2" placeholder="e.g. No major discomfort reported."></textarea>
+          </label>
+        </fieldset>
+
+        <!-- Activity -->
+        <fieldset>
+          <legend>🚶 Physical Activity</legend>
+          <div class="row-head act-head">
+            <span>Activity</span><span>Amount</span><span>Intensity</span><span>Notes</span><span></span>
+          </div>
+          <div id="actList" class="rows"></div>
+          <button type="button" class="btn ghost sm" id="addAct">+ Add activity</button>
+        </fieldset>
+
+        <!-- Mindset -->
+        <fieldset>
+          <legend>🧠 Behavior / Mindset Diary</legend>
+          <label>
+            <span class="hint">One thought per line — each line becomes a bullet.</span>
+            <textarea name="mindset" rows="5" placeholder="Stayed disciplined and didn't cave.&#10;Ate when hungry…"></textarea>
+          </label>
+        </fieldset>
+
+        <div class="form-actions">
+          <button type="submit" class="btn primary" id="saveBtn">Save Day</button>
+          <button type="button" class="btn ghost" id="cancelEdit" hidden>Cancel edit</button>
+          <button type="button" class="btn ghost" id="clearForm">Clear form</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-actions">
+      <button class="btn ghost sm" id="exportTxtBtn" type="button">📄 Download Summary (.txt)</button>
+      <button class="btn ghost sm" id="exportBtn" type="button">⬇ Export JSON</button>
+      <label class="btn ghost sm file-btn">⬆ Import JSON
+        <input type="file" id="importFile" accept="application/json" hidden />
+      </label>
+      <button class="btn ghost sm danger" id="resetBtn" type="button">Reset to original log</button>
+    </div>
+    <p class="muted small">Data source: carnivore_stack_log.txt · stored locally in your browser</p>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <datalist id="activityTypes">
+    <option value="Walk"></option>
+    <option value="Run"></option>
+    <option value="Weight lifting"></option>
+    <option value="Cycling"></option>
+    <option value="Hike"></option>
+    <option value="Stretching / Yoga"></option>
+    <option value="Sports"></option>
+  </datalist>
+
+  <script src="data.js"></script>
+  <script src="storage.js"></script>
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "Carnivore Journey",
+  "short_name": "Carnivore",
+  "description": "Daily carnivore stack, symptom tracking, and journal",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#120d0c",
+  "theme_color": "#2b1410",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

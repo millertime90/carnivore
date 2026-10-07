@@ -1,0 +1,875 @@
+/* Carnivore Journey — UI logic. All persistence goes through Storage (storage.js). */
+(() => {
+  'use strict';
+
+  // ───────── Helpers ─────────
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const esc = (s) =>
+    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const lines = (s) => String(s || '').split('\n').map((x) => x.trim()).filter(Boolean);
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `d${Date.now()}${Math.random().toString(16).slice(2)}`);
+  const todayISO = () => {
+    const t = new Date();
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  };
+  const fmtDate = (d) =>
+    d
+      ? new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+      : 'No date set';
+  const isZinc = (s) => /zinc/i.test(s.name);
+
+  const HUNGER = ['None', 'Neutral', 'Mild', 'Moderate', 'Strong'];
+  const ENERGY = ['Low', 'Neutral', 'Good', 'High'];
+  const SEVERITY = ['', '1 · Very mild', '2 · Mild', '3 · Moderate', '4 · Strong', '5 · Severe'];
+  const QUICK_SYMPTOMS = ['Headache', 'Loose / watery stools', 'Carb cravings', 'Fatigue', 'Brain fog', 'Muscle cramps', 'Nausea', 'Poor sleep', 'Bloating', 'Constipation'];
+  const INTENSITY = ['Easy', 'Moderate', 'Hard'];
+
+  let journal = { days: [], meta: {} };
+  let editingId = null;
+
+  const sortedDays = () => [...journal.days].sort((a, b) => a.dayNumber - b.dayNumber);
+
+  function toast(msg) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => t.classList.remove('show'), 2600);
+  }
+
+  // ───────── Derived info ─────────
+  function zincStatus() {
+    const days = sortedDays();
+    const last = days[days.length - 1];
+    if (!last) return { take: true, text: 'Zinc: take today (first day).' };
+    const tookZinc = (last.supplements || []).some((s) => isZinc(s) && s.taken);
+    return tookZinc
+      ? { take: false, text: `Zinc was taken on Day ${last.dayNumber} — skip today (every other day).` }
+      : { take: true, text: `Zinc was skipped on Day ${last.dayNumber} — take it today.` };
+  }
+
+  function onPlanStreak() {
+    let streak = 0;
+    for (const d of sortedDays().reverse()) {
+      if (!d.onPlan) break;
+      streak++;
+    }
+    return streak;
+  }
+
+  function symptomCounts() {
+    const map = new Map();
+    for (const d of journal.days)
+      for (const s of d.symptoms || []) {
+        const key = s.name.trim();
+        if (!key) continue;
+        const k = key.toLowerCase();
+        const cur = map.get(k) || { name: key, count: 0, days: [] };
+        cur.count++;
+        cur.days.push(d.dayNumber);
+        map.set(k, cur);
+      }
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  }
+
+  // ───────── Render: header stats ─────────
+  function renderStats() {
+    const days = sortedDays();
+    const z = zincStatus();
+    $('#stats').innerHTML = `
+      <div class="stat"><b>${days.length}</b><span>Days logged</span></div>
+      <div class="stat"><b>${onPlanStreak()}</b><span>On-plan streak</span></div>
+      <div class="stat ${z.take ? 'zinc-take' : 'zinc-skip'}"><b>${z.take ? 'Take' : 'Skip'}</b><span>Zinc next day</span></div>`;
+  }
+
+  // ───────── Render: stack ─────────
+  function renderStack() {
+    $('#stackGrid').innerHTML = STACK.map(
+      (g, i) => `
+      <article class="card stack-card">
+        <span class="step">STEP ${i + 1}</span>
+        <header>
+          <span class="icon">${g.icon}</span>
+          <div><h3>${esc(g.title)}</h3><span class="when">${esc(g.when)}</span></div>
+        </header>
+        <ul class="stack-items">
+          ${g.items
+            .map(
+              (it) => `<li>
+                <span class="item-name">${esc(it.name)}</span>
+                ${it.dose ? `<span class="dose">${esc(it.dose)}</span>` : '<span></span>'}
+                ${it.note ? `<small>${esc(it.note)}</small>` : ''}
+              </li>`
+            )
+            .join('')}
+        </ul>
+      </article>`
+    ).join('');
+  }
+
+  // ───────── Render: days ─────────
+  const ul = (items) => (items.length ? `<ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul>` : '<p class="muted">—</p>');
+
+  function fmtMeal(m) {
+    const parts = [];
+    if (m.steakOz) parts.push(`${esc(m.steakOz)} oz steak`);
+    if (m.eggs) parts.push(`${esc(m.eggs)} egg${Number(m.eggs) === 1 ? '' : 's'}`);
+    if (m.butterTbsp) parts.push(`${esc(m.butterTbsp)} tbsp butter`);
+    if (m.notes) parts.push(esc(m.notes));
+    return parts.join(' · ') || '—';
+  }
+
+  function renderDays() {
+    const days = sortedDays();
+    $('#dayCount').textContent = days.length;
+    if (!days.length) {
+      $('#dayList').innerHTML = '<p class="empty">No days logged yet. Use the form below to add your first day.</p>';
+      return;
+    }
+    $('#dayList').innerHTML = days
+      .map((d, idx) => {
+        const f = d.food || {};
+        const symptoms = (d.symptoms || []).map(
+          (s) =>
+            `<strong>${esc(s.name)}</strong>${s.severity ? `<span class="sev sev-${s.severity}">${s.severity}/5</span>` : ''}${
+              s.notes ? ` — ${esc(s.notes)}` : ''
+            }`
+        );
+        const symNotes = lines(d.symptomNotes).map((l) => `<p>${esc(l)}</p>`).join('');
+        const food = [];
+        if (f.drink) food.push(`<strong>Drink:</strong> ${esc(f.drink)}${f.waterOz ? ` (~${esc(f.waterOz)} fl oz)` : ''}`);
+        (f.meals || []).forEach((m) => food.push(`<strong>${esc(m.label || 'Meal')}:</strong> ${fmtMeal(m)}`));
+        const supps = (d.supplements || [])
+          .map(
+            (s) => `<li>${s.taken ? '<span class="tick">✓</span>' : '<span class="muted">✗</span>'}
+              <span class="${s.taken ? '' : 'skip'}">${esc(s.name)}</span>
+              <small>${esc(s.dose || '')}${s.timing ? ` · ${esc(s.timing)}` : ''}${s.taken ? '' : ' · skipped'}</small></li>`
+          )
+          .join('');
+        const acts = (d.activity || []).map(
+          (a) =>
+            `<strong>${esc(a.type || 'Activity')}</strong>${a.amount ? ` — ${esc(a.amount)}` : ''}${
+              a.intensity ? ` <span class="pill">${esc(a.intensity)}</span>` : ''
+            }${a.notes ? `<br><small class="muted">${esc(a.notes)}</small>` : ''}`
+        );
+        const pill = (label, val) => (val ? `<span class="pill">${label}: ${esc(val)}</span>` : '');
+        return `
+        <details class="card day-card" ${idx === days.length - 1 ? 'open' : ''}>
+          <summary>
+            <span class="day-badge">Day ${esc(d.dayNumber)}</span>
+            <span class="day-date">${fmtDate(d.date)}</span>
+            <span class="pills">
+              ${pill('Hunger', d.hunger)}${pill('Energy', d.energy)}
+              ${d.onPlan ? '<span class="pill ok">On plan</span>' : '<span class="pill bad">Off plan</span>'}
+              ${(d.symptoms || []).length ? `<span class="pill warn">${d.symptoms.length} symptom${d.symptoms.length > 1 ? 's' : ''}</span>` : ''}
+            </span>
+          </summary>
+          <div class="day-body">
+            <section><h4>🩺 Symptoms</h4>${symptoms.length ? ul(symptoms) : ''}${symNotes}${!symptoms.length && !symNotes ? '<p class="muted">None reported</p>' : ''}</section>
+            <section><h4>🥩 Food Intake</h4>${ul(food)}${f.notes ? `<p class="muted">${esc(f.notes)}</p>` : ''}</section>
+            <section><h4>💊 Supplements</h4>${supps ? `<ul class="supp-list">${supps}</ul>` : '<p class="muted">—</p>'}</section>
+            <section><h4>🚶 Physical Activity</h4>${acts.length ? ul(acts) : '<p class="muted">No activity logged</p>'}</section>
+            <section class="wide"><h4>🧠 Behavior / Mindset</h4>${ul(lines(d.mindset).map(esc))}</section>
+          </div>
+          <footer class="day-actions">
+            <button class="btn ghost sm" data-edit="${esc(d.id)}" type="button">✎ Edit</button>
+            <button class="btn ghost sm danger" data-del="${esc(d.id)}" type="button">🗑 Delete</button>
+          </footer>
+        </details>`;
+      })
+      .join('');
+  }
+
+  // ───────── Render: pattern ─────────
+  let editingPattern = false;
+
+  function renderPattern() {
+    const days = sortedDays();
+    $('#patternRange').textContent = days.length ? `(Day ${days[0].dayNumber} → Day ${days[days.length - 1].dayNumber})` : '';
+
+    $('#patternTable').innerHTML = days.length
+      ? `<thead><tr><th>Day</th><th>Hunger</th><th>Energy</th><th>Symptoms</th><th>Zinc</th><th>Activity</th><th>Plan</th></tr></thead>
+         <tbody>${days
+           .map((d) => {
+             const zinc = (d.supplements || []).find(isZinc);
+             return `<tr>
+               <td><strong>${esc(d.dayNumber)}</strong></td>
+               <td>${esc(d.hunger || '—')}</td>
+               <td>${esc(d.energy || '—')}</td>
+               <td>${(d.symptoms || []).map((s) => esc(s.name)).join(', ') || '—'}</td>
+               <td>${zinc ? (zinc.taken ? '✓' : 'skipped') : '—'}</td>
+               <td>${(d.activity || []).map((a) => esc([a.type, a.amount].filter(Boolean).join(' '))).join(', ') || '—'}</td>
+               <td>${d.onPlan ? '<span class="pill ok">✓</span>' : '<span class="pill bad">✗</span>'}</td>
+             </tr>`;
+           })
+           .join('')}</tbody>`
+      : '<tbody><tr><td class="muted">No entries yet.</td></tr></tbody>';
+
+    // Insights
+    const insights = [];
+    const onPlan = days.filter((d) => d.onPlan).length;
+    insights.push({ cls: onPlan === days.length ? 'ok' : 'warn', title: 'Consistency', text: `${onPlan} of ${days.length} days on plan.` });
+
+    const counts = symptomCounts();
+    insights.push({
+      cls: counts.length ? 'warn' : 'ok',
+      title: 'Symptoms seen',
+      text: counts.length ? counts.map((c) => `${esc(c.name)} (Day ${c.days.join(', ')})`).join(' · ') : 'None reported.',
+    });
+
+    // Zinc every-other-day check
+    const zincDays = days.filter((d) => (d.supplements || []).some((s) => isZinc(s) && s.taken)).map((d) => d.dayNumber);
+    const back2back = zincDays.filter((n, i) => i > 0 && n - zincDays[i - 1] === 1);
+    insights.push({
+      cls: back2back.length ? 'warn' : 'ok',
+      title: 'Zinc (every other day)',
+      text: back2back.length
+        ? `Taken on consecutive days: Day ${back2back.map((n) => `${n - 1}–${n}`).join(', ')}.`
+        : zincDays.length
+          ? `On schedule — taken on Day ${zincDays.join(', ')}.`
+          : 'Not taken yet.',
+    });
+
+    const active = days.filter((d) => (d.activity || []).length).length;
+    insights.push({ cls: '', title: 'Active days', text: `${active} of ${days.length} days with logged activity.` });
+
+    $('#insights').innerHTML = insights
+      .map((i) => `<div class="card insight ${i.cls}"><h4>${i.title}</h4><p>${i.text}</p></div>`)
+      .join('');
+
+    // Notes (editable)
+    const notes = journal.meta.patternNotes || {};
+    $('#patternNotes').innerHTML = Object.entries(notes)
+      .map(([title, text]) =>
+        editingPattern
+          ? `<div class="card note"><h4>${esc(title)}</h4><textarea data-note="${esc(title)}">${esc(text)}</textarea></div>`
+          : `<div class="card note"><h4>${esc(title)}</h4>${ul(lines(text).map(esc))}</div>`
+      )
+      .join('');
+    $('#editPattern').textContent = editingPattern ? '💾 Save notes' : 'Edit notes';
+  }
+
+  // ───────── Dynamic Narrative Synthesis ─────────
+  function generateDynamicNarrative(days) {
+    if (!days || !days.length) {
+      return 'No days logged yet. Log your first day to begin tracking your carnivore journey.';
+    }
+    const count = days.length;
+    const onPlanDays = days.filter((d) => d.onPlan).length;
+    const streak = onPlanStreak();
+    const pct = Math.round((onPlanDays / count) * 100);
+
+    // 1. Milestone & Adherence
+    let opening = '';
+    if (count === 1) {
+      opening = onPlanDays === 1
+        ? 'You completed Day 1 cleanly, staying disciplined through your first 24 hours on carnivore.'
+        : 'You completed Day 1 of your carnivore journey.';
+    } else if (onPlanDays === count) {
+      opening = `You have completed ${count} full days cleanly with 100% adherence to your carnivore protocol, staying disciplined through cravings and eating when hungry.`;
+    } else {
+      opening = `You have logged ${count} days on carnivore with ${onPlanDays} clean days (${pct}% on plan) and an active on-plan streak of ${streak} day${streak === 1 ? '' : 's'}.`;
+    }
+
+    // 2. Hunger & Cravings
+    let hungerCraving = '';
+    const firstHunger = days[0].hunger || 'mild';
+    const recentDays = days.slice(-2);
+    const recentHunger = recentDays.map((d) => d.hunger).filter(Boolean);
+    const hasCravings = days.some((d) =>
+      (d.symptoms || []).some((s) => /craving/i.test(s.name)) || /craving/i.test(d.mindset || '')
+    );
+
+    if (count >= 2) {
+      const hungerDesc = recentHunger.length ? recentHunger[recentHunger.length - 1].toLowerCase() : 'neutral';
+      if (hasCravings) {
+        hungerCraving = `Hunger transitioned from ${firstHunger.toLowerCase()} early on to a more ${hungerDesc} state, while carb cravings were recognized as psychological cues and overcome without breaking the diet.`;
+      } else {
+        hungerCraving = `Hunger has remained steady and manageable, currently resting at a ${hungerDesc} baseline as your body adapts.`;
+      }
+    }
+
+    // 3. Symptoms & Digestion
+    let symSummary = '';
+    const allSyms = symptomCounts();
+    const recentSyms = [].concat(...recentDays.map((d) => (d.symptoms || []).map((s) => s.name.toLowerCase())));
+
+    if (allSyms.length) {
+      const topSyms = allSyms.slice(0, 3).map((s) => s.name.toLowerCase()).join(', ');
+      if (count > 2 && recentSyms.length === 0) {
+        symSummary = `Early adaptation brought typical transition symptoms like ${topSyms}, which have leveled out with no acute symptoms reported in the most recent days.`;
+      } else {
+        symSummary = `You experienced normal early-transition adaptation symptoms (${topSyms}), while keeping hydration and electrolytes in your routine.`;
+      }
+    } else {
+      symSummary = 'No significant physical discomfort or adverse symptoms have been reported throughout the journey.';
+    }
+
+    // 4. Energy & Mood
+    let energySummary = '';
+    const recentEnergy = recentDays.map((d) => d.energy).filter(Boolean);
+    const curEnergy = recentEnergy.length ? recentEnergy[recentEnergy.length - 1].toLowerCase() : 'neutral';
+    energySummary = `Energy and mood have held at a steady, ${curEnergy} level without sudden drops.`;
+
+    // 5. Stack & Routine Consistency
+    let routineSummary = '';
+    const z = zincStatus();
+    const activeDays = days.filter((d) => (d.activity || []).length).length;
+    const actText = activeDays ? `with physical activity logged across ${activeDays} day${activeDays > 1 ? 's' : ''}` : 'prioritizing adaptation and rest';
+    routineSummary = `Your routine has remained stable with consistent steak and egg meals, salted bone broth (~30–40 fl oz with glutamine & creatine), and clean supplement timing (${z.take ? 'zinc due today' : 'zinc alternated cleanly'}), ${actText}.`;
+
+    return [opening, hungerCraving, symSummary, energySummary, routineSummary].filter(Boolean).join(' ');
+  }
+
+  // ───────── Render: summary ─────────
+  let editingSummary = false;
+
+  function renderSummary() {
+    const days = sortedDays();
+    const isCustom = !!(journal.meta && journal.meta.useCustom);
+    const dynamicText = generateDynamicNarrative(days);
+    const textToShow = isCustom ? (journal.meta.customSummary || journal.meta.summary || '') : dynamicText;
+
+    const badge = $('#summaryModeBadge');
+    const resetBtn = $('#resetAutoSummary');
+    const editBtn = $('#editSummary');
+
+    if (isCustom) {
+      badge.textContent = '📝 Custom Personal Summary';
+      resetBtn.hidden = false;
+      editBtn.textContent = editingSummary ? '💾 Save Custom' : '✎ Edit Custom';
+    } else {
+      badge.textContent = '✨ Live Dynamic Summary (Updates with each day)';
+      resetBtn.hidden = true;
+      editBtn.textContent = editingSummary ? '💾 Save Custom' : '✎ Custom Note';
+    }
+
+    $('#summaryBody').innerHTML = editingSummary
+      ? `<textarea id="summaryText" rows="6" placeholder="Write your personal overall summary...">${esc(textToShow)}</textarea>`
+      : `<p>${esc(textToShow) || '<span class="muted">No summary generated yet.</span>'}</p>`;
+
+    const counts = symptomCounts();
+    const onPlan = days.filter((d) => d.onPlan).length;
+    $('#summaryAuto').textContent = days.length
+      ? `Auto: ${days.length} day${days.length > 1 ? 's' : ''} logged · ${onPlan} on plan · current streak ${onPlanStreak()}${
+          counts.length ? ` · most frequent symptom: ${counts[0].name}` : ''
+        }.`
+      : '';
+  }
+
+  function renderAll() {
+    renderStats();
+    renderDays();
+    renderPattern();
+    renderSummary();
+  }
+
+  // ───────── Form: dynamic rows ─────────
+  const removeBtn = '<button type="button" class="icon-btn remove" title="Remove">✕</button>';
+  const opts = (arr, sel) => arr.map((v) => `<option ${String(v) === String(sel) ? 'selected' : ''}>${esc(v)}</option>`).join('');
+
+  function addRow(container, html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html.trim();
+    const el = tpl.content.firstElementChild;
+    container.appendChild(el);
+    return el;
+  }
+
+  function suppRow(s = {}, custom = false) {
+    const el = addRow(
+      $('#suppList'),
+      `<div class="row supp-row ${s.taken === false ? 'unchecked' : ''}" data-zinc="${isZinc({ name: s.name || '' })}">
+        <input type="checkbox" data-f="taken" ${s.taken === false ? '' : 'checked'} title="Taken" />
+        <input type="text" data-f="name" value="${esc(s.name)}" placeholder="Supplement" ${custom ? '' : 'readonly'} />
+        <input type="text" data-f="dose" value="${esc(s.dose)}" placeholder="Dose" />
+        <input type="text" data-f="timing" value="${esc(s.timing)}" placeholder="Timing (e.g. 1st meal)" />
+        ${custom ? removeBtn : '<span></span>'}
+      </div>`
+    );
+    return el;
+  }
+
+  const mealRow = (m = {}) =>
+    addRow(
+      $('#mealList'),
+      `<div class="row meal-row">
+        <input type="text" data-f="label" value="${esc(m.label)}" placeholder="Meal" />
+        <input type="number" data-f="steakOz" value="${esc(m.steakOz)}" min="0" step="0.5" placeholder="oz" />
+        <input type="number" data-f="eggs" value="${esc(m.eggs)}" min="0" step="1" placeholder="#" />
+        <input type="number" data-f="butterTbsp" value="${esc(m.butterTbsp)}" min="0" step="0.5" placeholder="tbsp" />
+        <input type="text" data-f="notes" value="${esc(m.notes)}" placeholder="Other foods / notes" />
+        ${removeBtn}
+      </div>`
+    );
+
+  const symRow = (s = {}) =>
+    addRow(
+      $('#symList'),
+      `<div class="row sym-row">
+        <input type="text" data-f="name" value="${esc(s.name)}" placeholder="Symptom" />
+        <select data-f="severity">${SEVERITY.map((v, i) => `<option value="${i || ''}" ${Number(s.severity) === i && i ? 'selected' : ''}>${v || 'Severity…'}</option>`).join('')}</select>
+        <input type="text" data-f="notes" value="${esc(s.notes)}" placeholder="e.g. 2 times, ~30 min each" />
+        ${removeBtn}
+      </div>`
+    );
+
+  const actRow = (a = {}) =>
+    addRow(
+      $('#actList'),
+      `<div class="row act-row">
+        <input type="text" data-f="type" value="${esc(a.type)}" list="activityTypes" placeholder="Walk, lifting…" />
+        <input type="text" data-f="amount" value="${esc(a.amount)}" placeholder="1 mile / 30 min" />
+        <select data-f="intensity"><option value="">Intensity…</option>${opts(INTENSITY, a.intensity)}</select>
+        <input type="text" data-f="notes" value="${esc(a.notes)}" placeholder="Notes" />
+        ${removeBtn}
+      </div>`
+    );
+
+  function readRows(container) {
+    return $$('.row', container).map((row) => {
+      const o = {};
+      $$('[data-f]', row).forEach((el) => {
+        o[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value.trim();
+      });
+      return o;
+    });
+  }
+
+  function buildSegmented() {
+    $$('.segmented').forEach((seg) => {
+      const group = seg.dataset.group;
+      const values = group === 'hunger' ? HUNGER : ENERGY;
+      seg.innerHTML = values.map((v) => `<label><input type="radio" name="${group}" value="${v}" />${v}</label>`).join('');
+    });
+    $('#symChips').innerHTML = QUICK_SYMPTOMS.map((s) => `<button type="button" class="chip" data-sym="${esc(s)}">+ ${esc(s)}</button>`).join('');
+  }
+
+  function setRadio(name, value) {
+    $$(`input[name="${name}"]`).forEach((r) => (r.checked = r.value === value));
+  }
+
+  // ───────── Form: fill / reset / collect ─────────
+  function clearRows() {
+    ['#suppList', '#mealList', '#symList', '#actList'].forEach((s) => ($(s).innerHTML = ''));
+  }
+
+  function resetForm() {
+    editingId = null;
+    const form = $('#dayForm');
+    form.reset();
+    clearRows();
+    const days = sortedDays();
+    form.dayNumber.value = days.length ? Math.max(...days.map((d) => d.dayNumber)) + 1 : 1;
+    form.date.value = todayISO();
+    form.onPlan.checked = true;
+    form.drink.value = 'Bone broth + L-glutamine + creatine (1 scoop) in lightly salted water';
+    form.waterOz.value = '30–40';
+    setRadio('hunger', '');
+    setRadio('energy', '');
+
+    const z = zincStatus();
+    SUPPLEMENTS.forEach((s) => suppRow({ ...s, taken: s.everyOtherDay ? z.take : true }));
+    $('#zincHint').textContent = `💡 ${z.text}`;
+    $('#zincHint').className = `hint ${z.take ? 'ok' : 'warn'}`;
+
+    mealRow({ label: 'Meal 1', steakOz: 11, eggs: 3, butterTbsp: 1 });
+    mealRow({ label: 'Meal 2', steakOz: 11, eggs: 2, butterTbsp: 1 });
+
+    $('#formTitle').textContent = '➕ Log a Day';
+    $('#saveBtn').textContent = 'Save Day';
+    $('#cancelEdit').hidden = true;
+    $$('.invalid', form).forEach((el) => el.classList.remove('invalid'));
+  }
+
+  function fillForm(day) {
+    editingId = day.id;
+    const form = $('#dayForm');
+    form.reset();
+    clearRows();
+    const f = day.food || {};
+    form.dayNumber.value = day.dayNumber;
+    form.date.value = day.date || '';
+    form.onPlan.checked = !!day.onPlan;
+    setRadio('hunger', day.hunger);
+    setRadio('energy', day.energy);
+    form.drink.value = f.drink || '';
+    form.waterOz.value = f.waterOz || '';
+    form.foodNotes.value = f.notes || '';
+    form.symptomNotes.value = day.symptomNotes || '';
+    form.mindset.value = day.mindset || '';
+
+    // Template supplements first (preserving recorded state), then any extras.
+    const recorded = day.supplements || [];
+    const templateNames = SUPPLEMENTS.map((s) => s.name.toLowerCase());
+    SUPPLEMENTS.forEach((t) => {
+      const r = recorded.find((s) => s.name.toLowerCase() === t.name.toLowerCase());
+      suppRow(r ? { ...t, ...r } : { ...t, taken: false });
+    });
+    recorded.filter((s) => !templateNames.includes(s.name.toLowerCase())).forEach((s) => suppRow(s, true));
+    $('#zincHint').textContent = '';
+
+    (f.meals || []).forEach(mealRow);
+    (day.symptoms || []).forEach(symRow);
+    (day.activity || []).forEach(actRow);
+
+    $('#formTitle').textContent = `✎ Editing Day ${day.dayNumber}`;
+    $('#saveBtn').textContent = `Update Day ${day.dayNumber}`;
+    $('#cancelEdit').hidden = false;
+    $('#log').scrollIntoView();
+  }
+
+  function collectForm() {
+    const form = $('#dayForm');
+    const supplements = readRows($('#suppList'))
+      .filter((s) => s.name)
+      .map((s) => ({ name: s.name, dose: s.dose, timing: s.timing, taken: !!s.taken }));
+    const meals = readRows($('#mealList'))
+      .filter((m) => m.label || m.steakOz || m.eggs || m.butterTbsp || m.notes)
+      .map((m) => ({ ...m, eggs: m.eggs === '' ? '' : Number(m.eggs) }));
+    const symptoms = readRows($('#symList'))
+      .filter((s) => s.name)
+      .map((s) => ({ name: s.name, severity: s.severity ? Number(s.severity) : '', notes: s.notes }));
+    const activity = readRows($('#actList')).filter((a) => a.type || a.amount);
+
+    return {
+      id: editingId || uid(),
+      dayNumber: Number(form.dayNumber.value),
+      date: form.date.value,
+      onPlan: form.onPlan.checked,
+      hunger: form.hunger.value || '',
+      energy: form.energy.value || '',
+      symptoms,
+      symptomNotes: form.symptomNotes.value.trim(),
+      food: { drink: form.drink.value.trim(), waterOz: form.waterOz.value.trim(), meals, notes: form.foodNotes.value.trim() },
+      supplements,
+      activity,
+      mindset: form.mindset.value.trim(),
+    };
+  }
+
+  function validate(day) {
+    const input = $('#dayForm').dayNumber;
+    input.classList.remove('invalid');
+    if (!Number.isInteger(day.dayNumber) || day.dayNumber < 1) {
+      input.classList.add('invalid');
+      return 'Day # must be a whole number of 1 or more.';
+    }
+    if (journal.days.some((d) => d.dayNumber === day.dayNumber && d.id !== day.id)) {
+      input.classList.add('invalid');
+      return `Day ${day.dayNumber} already exists — edit it instead, or pick another number.`;
+    }
+    return null;
+  }
+
+  // ───────── Text summary export ─────────
+  function fmtMealText(m) {
+    const parts = [];
+    if (m.steakOz) parts.push(`${m.steakOz} oz steak`);
+    if (m.eggs) parts.push(`${m.eggs} egg${Number(m.eggs) === 1 ? '' : 's'}`);
+    if (m.butterTbsp) parts.push(`${m.butterTbsp} tbsp butter`);
+    if (m.notes) parts.push(m.notes);
+    return parts.join(' · ') || '—';
+  }
+
+  function generateTextSummary() {
+    const days = sortedDays();
+    const z = zincStatus();
+    const streak = onPlanStreak();
+    const counts = symptomCounts();
+    const onPlanCount = days.filter((d) => d.onPlan).length;
+    const pctOnPlan = days.length ? Math.round((onPlanCount / days.length) * 100) : 0;
+    const generatedAt = new Date().toLocaleString();
+
+    let out = '';
+    out += '==========================================================\n';
+    out += ' CARNIVORE JOURNEY — OVERALL SUMMARY & LOG ARCHIVE\n';
+    out += ` Generated: ${generatedAt}\n`;
+    out += '==========================================================\n\n';
+
+    out += '📊 QUICK STATS\n';
+    out += '----------------------------------------------------------\n';
+    out += `• Days Logged:       ${days.length}\n`;
+    out += `• On-Plan Streak:    ${streak} day${streak === 1 ? '' : 's'}\n`;
+    out += `• Adherence Rate:    ${onPlanCount}/${days.length} (${pctOnPlan}% on plan)\n`;
+    out += `• Next Zinc Status:  ${z.take ? 'TAKE' : 'SKIP'} (${z.text})\n`;
+    if (counts.length) {
+      out += `• Symptoms Seen:     ${counts.map((c) => `${c.name} (${c.count}x)`).join(', ')}\n`;
+    }
+    out += '\n';
+
+    out += '⭐ OVERALL CARNIVORE SUMMARY\n';
+    out += '----------------------------------------------------------\n';
+    const isCustom = !!(journal.meta && journal.meta.useCustom);
+    const narrativeText = generateDynamicNarrative(days);
+    if (isCustom && (journal.meta.customSummary || journal.meta.summary)) {
+      out += `[Custom Summary]\n${journal.meta.customSummary || journal.meta.summary}\n\n`;
+      out += `[Live Dynamic Synthesis]\n${narrativeText}\n\n`;
+    } else {
+      out += `${narrativeText}\n\n`;
+    }
+    if (days.length) {
+      out += `Auto-metric: ${days.length} day${days.length > 1 ? 's' : ''} logged · ${onPlanCount} on plan · current streak ${streak}${
+        counts.length ? ` · most frequent symptom: ${counts[0].name}` : ''
+      }.\n\n`;
+    }
+
+    out += '⭐ OVERALL PATTERNS\n';
+    out += '----------------------------------------------------------\n';
+    const pNotes = (journal.meta && journal.meta.patternNotes) || {};
+    for (const [category, noteText] of Object.entries(pNotes)) {
+      out += `[${category}]\n`;
+      for (const l of lines(noteText)) {
+        out += `• ${l}\n`;
+      }
+      out += '\n';
+    }
+
+    out += '⭐ DAILY STACK TEMPLATE (REFERENCE ROUTINE)\n';
+    out += '----------------------------------------------------------\n';
+    STACK.forEach((g, idx) => {
+      out += `Step ${idx + 1}: ${g.title} (${g.when})\n`;
+      g.items.forEach((it) => {
+        out += `  - ${it.name}${it.dose ? `: ${it.dose}` : ''}${it.note ? ` (${it.note})` : ''}\n`;
+      });
+      out += '\n';
+    });
+
+    out += '⭐ DAY-BY-DAY LOG ENTRIES\n';
+    out += '----------------------------------------------------------\n';
+    if (!days.length) {
+      out += '(No days logged yet)\n\n';
+    } else {
+      days.forEach((d) => {
+        out += `\n⭐ DAY ${d.dayNumber}${d.date ? ` — ${fmtDate(d.date)}` : ''}\n`;
+        out += `Plan Status: ${d.onPlan ? 'Clean / On Plan' : 'Off Plan'}\n`;
+        out += `Hunger:      ${d.hunger || 'Not recorded'}\n`;
+        out += `Energy/Mood: ${d.energy || 'Not recorded'}\n\n`;
+
+        out += 'Physical Symptoms:\n';
+        const symList = d.symptoms || [];
+        if (symList.length) {
+          symList.forEach((s) => {
+            out += `  • ${s.name}${s.severity ? ` (Severity: ${s.severity}/5)` : ''}${s.notes ? ` — ${s.notes}` : ''}\n`;
+          });
+        }
+        if (d.symptomNotes) {
+          lines(d.symptomNotes).forEach((l) => {
+            out += `  • ${l}\n`;
+          });
+        }
+        if (!symList.length && !d.symptomNotes) {
+          out += '  • None reported\n';
+        }
+        out += '\n';
+
+        out += 'Food Intake:\n';
+        const f = d.food || {};
+        if (f.drink) {
+          out += `  • Pre-meal drink: ${f.drink}${f.waterOz ? ` (~${f.waterOz} fl oz)` : ''}\n`;
+        }
+        (f.meals || []).forEach((m) => {
+          out += `  • ${m.label || 'Meal'}: ${fmtMealText(m)}\n`;
+        });
+        if (f.notes) {
+          out += `  • Food notes: ${f.notes}\n`;
+        }
+        out += '\n';
+
+        out += 'Supplements:\n';
+        const supps = d.supplements || [];
+        if (supps.length) {
+          supps.forEach((s) => {
+            out += `  • [${s.taken ? 'X' : ' '}] ${s.name}${s.dose ? ` (${s.dose})` : ''}${s.timing ? ` · ${s.timing}` : ''}${s.taken ? '' : ' · [SKIPPED]'}\n`;
+          });
+        } else {
+          out += '  • None recorded\n';
+        }
+        out += '\n';
+
+        out += 'Physical Activity:\n';
+        const acts = d.activity || [];
+        if (acts.length) {
+          acts.forEach((a) => {
+            out += `  • ${a.type || 'Activity'}${a.amount ? `: ${a.amount}` : ''}${a.intensity ? ` (${a.intensity})` : ''}${a.notes ? ` — ${a.notes}` : ''}\n`;
+          });
+        } else {
+          out += '  • No activity logged\n';
+        }
+        out += '\n';
+
+        out += 'Behavior / Mindset Diary:\n';
+        if (d.mindset) {
+          lines(d.mindset).forEach((l) => {
+            out += `  • ${l}\n`;
+          });
+        } else {
+          out += '  • No notes recorded\n';
+        }
+        out += '\n----------------------------------------------------------\n';
+      });
+    }
+
+    return out;
+  }
+
+  function downloadTextSummary() {
+    const text = generateTextSummary();
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `carnivore_summary_${todayISO()}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('Downloaded summary text document.');
+  }
+
+  // ───────── Events ─────────
+  function bindEvents() {
+    const form = $('#dayForm');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const day = collectForm();
+      const err = validate(day);
+      if (err) return toast(`⚠ ${err}`);
+      const wasEditing = !!editingId;
+      journal = await Storage.saveDay(day);
+      renderAll();
+      resetForm();
+      toast(wasEditing ? `Day ${day.dayNumber} updated.` : `Day ${day.dayNumber} saved.`);
+      $('#days').scrollIntoView();
+    });
+
+    $('#cancelEdit').addEventListener('click', resetForm);
+    $('#clearForm').addEventListener('click', resetForm);
+    $('#addSupp').addEventListener('click', () => suppRow({ taken: true }, true).querySelector('[data-f="name"]').focus());
+    $('#addMeal').addEventListener('click', () => mealRow({ label: `Meal ${$$('#mealList .row').length + 1}` }));
+    $('#addSym').addEventListener('click', () => symRow().querySelector('input').focus());
+    $('#addAct').addEventListener('click', () => actRow().querySelector('input').focus());
+
+    $('#symChips').addEventListener('click', (e) => {
+      const chip = e.target.closest('[data-sym]');
+      if (!chip) return;
+      const exists = readRows($('#symList')).some((s) => s.name.toLowerCase() === chip.dataset.sym.toLowerCase());
+      if (exists) return toast(`${chip.dataset.sym} is already listed.`);
+      symRow({ name: chip.dataset.sym }).querySelector('select').focus();
+    });
+
+    // Remove row + dim unchecked supplements
+    form.addEventListener('click', (e) => {
+      if (e.target.matches('.remove')) e.target.closest('.row').remove();
+    });
+    form.addEventListener('change', (e) => {
+      if (e.target.matches('.supp-row [data-f="taken"]')) e.target.closest('.row').classList.toggle('unchecked', !e.target.checked);
+    });
+
+    // Day edit / delete
+    $('#dayList').addEventListener('click', async (e) => {
+      const editId = e.target.closest('[data-edit]')?.dataset.edit;
+      const delId = e.target.closest('[data-del]')?.dataset.del;
+      if (editId) {
+        const day = journal.days.find((d) => d.id === editId);
+        if (day) fillForm(day);
+      } else if (delId) {
+        const day = journal.days.find((d) => d.id === delId);
+        if (day && confirm(`Delete Day ${day.dayNumber}? This can't be undone (export first if unsure).`)) {
+          journal = await Storage.deleteDay(delId);
+          if (editingId === delId) resetForm();
+          renderAll();
+          toast(`Day ${day.dayNumber} deleted.`);
+        }
+      }
+    });
+
+    $('#expandAll').addEventListener('click', () => $$('.day-card').forEach((d) => (d.open = true)));
+    $('#collapseAll').addEventListener('click', () => $$('.day-card').forEach((d) => (d.open = false)));
+
+    // Pattern notes edit/save
+    $('#editPattern').addEventListener('click', async () => {
+      if (editingPattern) {
+        const notes = { ...journal.meta.patternNotes };
+        $$('[data-note]').forEach((t) => (notes[t.dataset.note] = t.value));
+        journal = await Storage.saveMeta({ patternNotes: notes });
+        toast('Pattern notes saved.');
+      }
+      editingPattern = !editingPattern;
+      renderPattern();
+    });
+
+    // Summary edit/save & reset
+    $('#editSummary').addEventListener('click', async () => {
+      if (editingSummary) {
+        const val = $('#summaryText').value.trim();
+        journal = await Storage.saveMeta({
+          customSummary: val,
+          useCustom: true,
+          summary: val,
+        });
+        toast('Custom summary saved.');
+      }
+      editingSummary = !editingSummary;
+      renderSummary();
+    });
+
+    $('#resetAutoSummary').addEventListener('click', async () => {
+      journal = await Storage.saveMeta({ useCustom: false });
+      editingSummary = false;
+      renderSummary();
+      toast('Switched back to live dynamic summary.');
+    });
+
+    // Export / import / reset
+    $('#downloadTxtSummary').addEventListener('click', downloadTextSummary);
+    $('#exportTxtBtn').addEventListener('click', downloadTextSummary);
+
+    $('#exportBtn').addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(journal, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `carnivore_journal_${todayISO()}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    $('#importFile').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        if (!Array.isArray(data.days)) throw new Error('missing "days" array');
+        if (!confirm(`Replace current journal with ${data.days.length} day(s) from "${file.name}"?`)) return;
+        journal = await Storage.replaceAll({ version: 1, meta: {}, ...data });
+        renderAll();
+        resetForm();
+        toast('Journal imported.');
+      } catch (err) {
+        toast(`⚠ Import failed: ${err.message}`);
+      }
+    });
+
+    $('#resetBtn').addEventListener('click', async () => {
+      if (!confirm('Reset everything to the original text log? Days you added will be lost (export first if unsure).')) return;
+      journal = await Storage.reset();
+      editingPattern = editingSummary = false;
+      renderAll();
+      resetForm();
+      toast('Reset to original log.');
+    });
+  }
+
+  // ───────── Init ─────────
+  async function init() {
+    buildSegmented();
+    renderStack();
+    journal = await Storage.load();
+    journal.meta = journal.meta || {};
+    renderAll();
+    resetForm();
+    bindEvents();
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
