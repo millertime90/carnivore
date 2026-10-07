@@ -8,6 +8,16 @@ const {
   authenticateGoogle,
   authenticateToken,
 } = require('./auth');
+const {
+  sendFriendRequest,
+  getFriendsOverview,
+  respondFriendRequest,
+  removeFriend,
+  sendAccountabilityRequest,
+  respondAccountabilityRequest,
+  removeAccountabilityPartnership,
+  getBuddyJournal,
+} = require('./social');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -111,6 +121,94 @@ app.put('/api/journal', authenticateToken, (req, res) => {
 
   stmt.run(req.user.id, jsonStr);
   res.json({ success: true, message: 'Journal synced successfully' });
+});
+
+// ───────── Friends & Social Endpoints ─────────
+
+// Get Friends & Requests Overview
+app.get('/api/friends', authenticateToken, (req, res) => {
+  try {
+    const data = getFriendsOverview(req.user.id);
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Send Friend Request
+app.post('/api/friends/request', authenticateToken, (req, res) => {
+  try {
+    const { username } = req.body;
+    const result = sendFriendRequest(req.user.id, username);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Respond to Friend Request (accept or decline)
+app.put('/api/friends/:id/respond', authenticateToken, (req, res) => {
+  try {
+    const { accept } = req.body;
+    const result = respondFriendRequest(req.user.id, req.params.id, Boolean(accept));
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Remove Friend
+app.delete('/api/friends/:friendUserId', authenticateToken, (req, res) => {
+  try {
+    const result = removeFriend(req.user.id, req.params.friendUserId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ───────── Accountability Endpoints ─────────
+
+// Send Accountability Request
+app.post('/api/accountability/request', authenticateToken, (req, res) => {
+  try {
+    const { friendUsername } = req.body;
+    const result = sendAccountabilityRequest(req.user.id, friendUsername);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Respond to Accountability Request (accept or decline, with shareBack)
+app.put('/api/accountability/:id/respond', authenticateToken, (req, res) => {
+  try {
+    const { accept, shareBack } = req.body;
+    const result = respondAccountabilityRequest(req.user.id, req.params.id, Boolean(accept), Boolean(shareBack));
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// End Accountability Partnership
+app.delete('/api/accountability/:id', authenticateToken, (req, res) => {
+  try {
+    const result = removeAccountabilityPartnership(req.user.id, req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Get Buddy's Full Journal (Access-Controlled)
+app.get('/api/accountability/journal/:targetUserId', authenticateToken, (req, res) => {
+  try {
+    const data = getBuddyJournal(req.user.id, req.params.targetUserId);
+    res.json(data);
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
 });
 
 app.listen(PORT, () => {

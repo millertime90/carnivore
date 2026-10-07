@@ -141,6 +141,57 @@ const Storage = (() => {
       writeLocal(clone(SEED_JOURNAL));
     },
 
+    // ───────── Friends & Social Methods ─────────
+    async getFriends() {
+      if (!getToken()) return { friends: [], incomingFriendRequests: [], incomingAccountabilityRequests: [] };
+      return apiFetch('/friends');
+    },
+
+    async sendFriendRequest(username) {
+      return apiFetch('/friends/request', {
+        method: 'POST',
+        body: JSON.stringify({ username }),
+      });
+    },
+
+    async respondFriendRequest(friendshipId, accept) {
+      return apiFetch(`/friends/${friendshipId}/respond`, {
+        method: 'PUT',
+        body: JSON.stringify({ accept }),
+      });
+    },
+
+    async removeFriend(friendUserId) {
+      return apiFetch(`/friends/${friendUserId}`, {
+        method: 'DELETE',
+      });
+    },
+
+    // ───────── Accountability Methods ─────────
+    async sendAccountabilityRequest(friendUsername) {
+      return apiFetch('/accountability/request', {
+        method: 'POST',
+        body: JSON.stringify({ friendUsername }),
+      });
+    },
+
+    async respondAccountability(partnershipId, accept, shareBack = false) {
+      return apiFetch(`/accountability/${partnershipId}/respond`, {
+        method: 'PUT',
+        body: JSON.stringify({ accept, shareBack }),
+      });
+    },
+
+    async removeAccountability(partnershipId) {
+      return apiFetch(`/accountability/${partnershipId}`, {
+        method: 'DELETE',
+      });
+    },
+
+    async fetchBuddyJournal(targetUserId) {
+      return apiFetch(`/accountability/journal/${targetUserId}`);
+    },
+
     // ───────── Cloud Journal Sync ─────────
     async syncRemote(journal) {
       if (!getToken()) return;

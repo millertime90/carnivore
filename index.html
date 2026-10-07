@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-title" content="Carnivore" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=5" />
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -28,10 +28,19 @@
       <a href="#days">Days</a>
       <a href="#pattern">Overall Pattern</a>
       <a href="#summary">Summary</a>
-      <a href="#log" class="cta">+ Log a Day</a>
+      <a href="#log" class="cta" id="navLogBtn">+ Log a Day</a>
+      <button class="btn ghost sm friends-btn" id="friendsBtn" type="button">👥 Friends <span class="badge" id="friendsBadge" hidden>0</span></button>
       <button class="btn ghost sm account-btn" id="authBtn" type="button">👤 Account</button>
     </nav>
   </header>
+
+  <!-- ───────── Observer Mode Banner ───────── -->
+  <aside class="observer-banner" id="observerBanner" hidden>
+    <div class="observer-banner-inner">
+      <span>👁 Viewing <strong><span id="observerUsername">User</span></strong>'s journal (Read-Only Observer Mode)</span>
+      <button class="btn ghost sm" id="exitObserverBtn" type="button">✕ Return to My Journal</button>
+    </div>
+  </aside>
 
   <main>
     <!-- ───────── Daily Stack ───────── -->
@@ -316,6 +325,65 @@
     </div>
   </div>
 
+  <!-- ───────── Friends & Buddies Modal ───────── -->
+  <div class="modal-backdrop" id="friendsModal" hidden>
+    <div class="card modal-content friends-modal" role="dialog" aria-modal="true" aria-labelledby="friendsModalTitle">
+      <div class="modal-head">
+        <h3 id="friendsModalTitle">👥 Friends &amp; Buddies</h3>
+        <button class="icon-btn close-modal" id="closeFriendsModal" type="button" aria-label="Close">✕</button>
+      </div>
+
+      <div class="auth-tabs" id="friendsTabs">
+        <button class="auth-tab active" id="tabMyFriends" type="button">My Friends</button>
+        <button class="auth-tab" id="tabFriendRequests" type="button">Requests <span class="badge" id="tabRequestsBadge" hidden>0</span></button>
+        <button class="auth-tab" id="tabAddFriend" type="button">+ Add Friend</button>
+      </div>
+
+      <!-- Panel: My Friends -->
+      <div class="friends-panel" id="panelMyFriends">
+        <div id="friendsList" class="friends-list"></div>
+      </div>
+
+      <!-- Panel: Requests -->
+      <div class="friends-panel" id="panelFriendRequests" hidden>
+        <div id="requestsList" class="requests-list"></div>
+      </div>
+
+      <!-- Panel: Add Friend -->
+      <div class="friends-panel" id="panelAddFriend" hidden>
+        <form id="addFriendForm" autocomplete="off">
+          <label>Friend's Username
+            <input type="text" id="addFriendUsername" placeholder="e.g. CarnivoreWarrior" required maxlength="30" />
+          </label>
+          <div style="margin-top: 1rem;">
+            <button class="btn primary" type="submit" style="width: 100%;">Send Friend Request</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────── Lead by Example Modal ───────── -->
+  <div class="modal-backdrop" id="leadModal" hidden>
+    <div class="card modal-content" role="dialog" aria-modal="true" aria-labelledby="leadModalTitle">
+      <div class="modal-head">
+        <h3 id="leadModalTitle">🤝 Accountability Partnership</h3>
+        <button class="icon-btn close-modal" id="closeLeadModal" type="button" aria-label="Close">✕</button>
+      </div>
+      <p style="margin: 0.5rem 0 1rem; font-size: 0.95rem; line-height: 1.5; color: var(--text);">
+        You are accepting <strong><span id="leadPartnerName">User</span></strong>'s accountability request. You can now monitor their daily logs, streaks, and symptoms to help them stay on plan.
+      </p>
+      <div class="lead-prompt-box">
+        <p style="margin: 0; font-weight: 600; color: var(--accent-2);">Lead by example:</p>
+        <p style="margin: 0.35rem 0 0; font-size: 0.9rem; color: var(--text);">Do you also want to share your full journal and logs with <span id="leadPartnerName2">User</span>?</p>
+      </div>
+      <div class="modal-actions" style="margin-top: 1.25rem; display: flex; flex-direction: column; gap: 0.65rem;">
+        <button class="btn primary" id="acceptWithShareBtn" type="button">✨ Yes, Share My Logs Too (Mutual Partnership)</button>
+        <button class="btn ghost" id="acceptWithoutShareBtn" type="button">No, Just Keep Tabs on Them (Mentor Mode)</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <datalist id="activityTypes">
@@ -328,13 +396,13 @@
     <option value="Sports"></option>
   </datalist>
 
-  <script src="data.js?v=4"></script>
-  <script src="storage.js?v=4"></script>
-  <script src="app.js?v=4"></script>
+  <script src="data.js?v=5"></script>
+  <script src="storage.js?v=5"></script>
+  <script src="app.js?v=5"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js?v=4').then((reg) => {
+        navigator.serviceWorker.register('sw.js?v=5').then((reg) => {
           reg.update();
         }).catch(() => {});
       });

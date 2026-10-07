@@ -932,9 +932,12 @@
       if (user) {
         authBtn.textContent = `👤 ${user.username}`;
         authBtn.title = `Logged in as ${user.username}`;
+        if (typeof refreshFriendsData === 'function') refreshFriendsData();
       } else {
         authBtn.textContent = '👤 Account';
         authBtn.title = 'Sign In or Create Account';
+        const b = $('#friendsBadge');
+        if (b) b.hidden = true;
       }
     }
 
@@ -1135,6 +1138,7 @@
     });
 
     logoutBtn.addEventListener('click', async () => {
+      exitObserverMode();
       Storage.logout();
       updateAuthNav();
       journal = await Storage.load();
@@ -1144,6 +1148,354 @@
       authModal.hidden = true;
       toast('Logged out. Switched to clean slate.');
     });
+
+    // ───────── Friends & Accountability UI Logic ─────────
+    const friendsModal = $('#friendsModal');
+    const friendsBtn = $('#friendsBtn');
+    const closeFriendsModal = $('#closeFriendsModal');
+    const friendsBadge = $('#friendsBadge');
+    const tabRequestsBadge = $('#tabRequestsBadge');
+    const tabMyFriends = $('#tabMyFriends');
+    const tabFriendRequests = $('#tabFriendRequests');
+    const tabAddFriend = $('#tabAddFriend');
+    const panelMyFriends = $('#panelMyFriends');
+    const panelFriendRequests = $('#panelFriendRequests');
+    const panelAddFriend = $('#panelAddFriend');
+    const addFriendForm = $('#addFriendForm');
+    const friendsList = $('#friendsList');
+    const requestsList = $('#requestsList');
+
+    const leadModal = $('#leadModal');
+    const closeLeadModal = $('#closeLeadModal');
+    const leadPartnerName = $('#leadPartnerName');
+    const leadPartnerName2 = $('#leadPartnerName2');
+    const acceptWithShareBtn = $('#acceptWithShareBtn');
+    const acceptWithoutShareBtn = $('#acceptWithoutShareBtn');
+
+    const observerBanner = $('#observerBanner');
+    const observerUsername = $('#observerUsername');
+    const exitObserverBtn = $('#exitObserverBtn');
+
+    let myOwnJournal = null;
+    let isObserverMode = false;
+    let pendingLeadRequestId = null;
+
+    async function refreshFriendsData() {
+      if (!Storage.isLoggedIn()) {
+        friendsBadge.hidden = true;
+        tabRequestsBadge.hidden = true;
+        return;
+      }
+
+      try {
+        const data = await Storage.getFriends();
+        const incomingCount = (data.incomingFriendRequests?.length || 0) + (data.incomingAccountabilityRequests?.length || 0);
+
+        if (incomingCount > 0) {
+          friendsBadge.textContent = incomingCount;
+          friendsBadge.hidden = false;
+          tabRequestsBadge.textContent = incomingCount;
+          tabRequestsBadge.hidden = false;
+        } else {
+          friendsBadge.hidden = true;
+          tabRequestsBadge.hidden = true;
+        }
+
+        // Render My Friends
+        if (!data.friends || data.friends.length === 0) {
+          friendsList.innerHTML = '<p class="muted small" style="text-align: center; padding: 1.5rem 0;">No friends yet. Add friends using the "+ Add Friend" tab!</p>';
+        } else {
+          friendsList.innerHTML = data.friends
+            .map((f) => {
+              let statusLabel = '<span class="friend-status">Friend</span>';
+              if (f.accountabilityStatus === 'active') {
+                statusLabel = '<span class="friend-status buddy">⭐ Accountability Buddy</span>';
+              } else if (f.accountabilityStatus === 'request_sent') {
+                statusLabel = '<span class="friend-status">⏳ Request Pending</span>';
+              } else if (f.accountabilityStatus === 'request_received') {
+                statusLabel = '<span class="friend-status buddy">📬 Request Waiting</span>';
+              }
+
+              const viewBtn = f.canViewJournal
+                ? `<button class="btn primary sm" data-view-journal="${f.id}" data-username="${esc(f.username)}">👁 View Journal</button>`
+                : '';
+
+              const reqAccBtn = !f.accountabilityStatus
+                ? `<button class="btn ghost sm" data-req-accountability="${esc(f.username)}" title="Request Accountability Buddy">🤝 Accountability</button>`
+                : '';
+
+              return `
+              <div class="friend-card">
+                <div class="friend-info">
+                  <div class="friend-avatar">${esc(f.username.slice(0, 1).toUpperCase())}</div>
+                  <div class="friend-meta">
+                    <p class="friend-username">@${esc(f.username)}</p>
+                    ${statusLabel}
+                  </div>
+                </div>
+                <div class="friend-actions">
+                  ${viewBtn}
+                  ${reqAccBtn}
+                  <button class="icon-btn sm" data-remove-friend="${f.id}" data-username="${esc(f.username)}" title="Remove Friend">✕</button>
+                </div>
+              </div>`;
+            })
+            .join('');
+        }
+
+        // Render Requests
+        const friendReqs = data.incomingFriendRequests || [];
+        const accReqs = data.incomingAccountabilityRequests || [];
+
+        if (friendReqs.length === 0 && accReqs.length === 0) {
+          requestsList.innerHTML = '<p class="muted small" style="text-align: center; padding: 1.5rem 0;">No pending requests.</p>';
+        } else {
+          const reqHtml = [];
+
+          friendReqs.forEach((r) => {
+            reqHtml.push(`
+            <div class="request-card">
+              <div class="friend-info">
+                <div class="friend-avatar">${esc(r.username.slice(0, 1).toUpperCase())}</div>
+                <div class="friend-meta">
+                  <p class="friend-username">@${esc(r.username)}</p>
+                  <span class="friend-status">Wants to be friends</span>
+                </div>
+              </div>
+              <div class="friend-actions">
+                <button class="btn primary sm" data-accept-friend="${r.id}">Accept</button>
+                <button class="btn ghost sm" data-decline-friend="${r.id}">Decline</button>
+              </div>
+            </div>`);
+          });
+
+          accReqs.forEach((r) => {
+            reqHtml.push(`
+            <div class="request-card">
+              <div class="friend-info">
+                <div class="friend-avatar">${esc(r.username.slice(0, 1).toUpperCase())}</div>
+                <div class="friend-meta">
+                  <p class="friend-username">@${esc(r.username)}</p>
+                  <span class="friend-status buddy">Wants you as Accountability Buddy</span>
+                </div>
+              </div>
+              <div class="friend-actions">
+                <button class="btn primary sm" data-accept-accountability="${r.id}" data-username="${esc(r.username)}">Review &amp; Accept</button>
+                <button class="btn ghost sm" data-decline-accountability="${r.id}">Decline</button>
+              </div>
+            </div>`);
+          });
+
+          requestsList.innerHTML = reqHtml.join('');
+        }
+      } catch (err) {
+        console.warn('Failed to load friends overview:', err.message);
+      }
+    }
+
+    // Switch Tabs in Friends Modal
+    function switchFriendsTab(tab) {
+      tabMyFriends.classList.toggle('active', tab === 'friends');
+      tabFriendRequests.classList.toggle('active', tab === 'requests');
+      tabAddFriend.classList.toggle('active', tab === 'add');
+
+      panelMyFriends.hidden = tab !== 'friends';
+      panelFriendRequests.hidden = tab !== 'requests';
+      panelAddFriend.hidden = tab !== 'add';
+    }
+
+    tabMyFriends.addEventListener('click', () => switchFriendsTab('friends'));
+    tabFriendRequests.addEventListener('click', () => switchFriendsTab('requests'));
+    tabAddFriend.addEventListener('click', () => switchFriendsTab('add'));
+
+    friendsBtn.addEventListener('click', () => {
+      if (!Storage.isLoggedIn()) {
+        toast('Please log in or create an account to use Friends & Buddies.');
+        authModal.hidden = false;
+        return;
+      }
+      switchFriendsTab('friends');
+      friendsModal.hidden = false;
+      refreshFriendsData();
+    });
+
+    closeFriendsModal.addEventListener('click', () => {
+      friendsModal.hidden = true;
+    });
+
+    friendsModal.addEventListener('click', (e) => {
+      if (e.target === friendsModal) friendsModal.hidden = true;
+    });
+
+    // Send Friend Request
+    addFriendForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = $('#addFriendUsername').value.trim();
+      if (!username) return;
+      try {
+        const res = await Storage.sendFriendRequest(username);
+        toast(res.message);
+        addFriendForm.reset();
+        switchFriendsTab('friends');
+        refreshFriendsData();
+      } catch (err) {
+        toast(`⚠ ${err.message}`);
+      }
+    });
+
+    // Friends list click actions (Request accountability, View journal, Remove friend)
+    friendsList.addEventListener('click', async (e) => {
+      const reqAccTarget = e.target.closest('[data-req-accountability]')?.dataset.reqAccountability;
+      const removeFriendId = e.target.closest('[data-remove-friend]')?.dataset.removeFriend;
+      const removeFriendName = e.target.closest('[data-remove-friend]')?.dataset.username;
+      const viewJournalId = e.target.closest('[data-view-journal]')?.dataset.viewJournal;
+      const viewJournalName = e.target.closest('[data-view-journal]')?.dataset.username;
+
+      if (reqAccTarget) {
+        const ok = await showConfirm(
+          'Request Accountability Buddy',
+          `Request @${reqAccTarget} for help keeping accountability? They will be granted full access to view your daily logs, streaks, meals, and symptoms to help you stay on plan.`,
+          'Send Request'
+        );
+        if (!ok) return;
+        try {
+          const res = await Storage.sendAccountabilityRequest(reqAccTarget);
+          toast(res.message);
+          refreshFriendsData();
+        } catch (err) {
+          toast(`⚠ ${err.message}`);
+        }
+      } else if (removeFriendId) {
+        const ok = await showConfirm(
+          'Remove Friend',
+          `Remove @${removeFriendName} from your friends list? Any accountability partnership between you will also end.`,
+          'Remove',
+          true
+        );
+        if (!ok) return;
+        try {
+          const res = await Storage.removeFriend(removeFriendId);
+          toast(res.message);
+          refreshFriendsData();
+        } catch (err) {
+          toast(`⚠ ${err.message}`);
+        }
+      } else if (viewJournalId) {
+        enterObserverMode(viewJournalId, viewJournalName);
+      }
+    });
+
+    // Requests list click actions (Accept / decline friend, Review accountability)
+    requestsList.addEventListener('click', async (e) => {
+      const acceptFriendId = e.target.closest('[data-accept-friend]')?.dataset.acceptFriend;
+      const declineFriendId = e.target.closest('[data-decline-friend]')?.dataset.declineFriend;
+      const acceptAccId = e.target.closest('[data-accept-accountability]')?.dataset.acceptAccountability;
+      const acceptAccName = e.target.closest('[data-accept-accountability]')?.dataset.username;
+      const declineAccId = e.target.closest('[data-decline-accountability]')?.dataset.declineAccountability;
+
+      if (acceptFriendId) {
+        try {
+          const res = await Storage.respondFriendRequest(acceptFriendId, true);
+          toast(res.message);
+          refreshFriendsData();
+        } catch (err) {
+          toast(`⚠ ${err.message}`);
+        }
+      } else if (declineFriendId) {
+        try {
+          const res = await Storage.respondFriendRequest(declineFriendId, false);
+          toast(res.message);
+          refreshFriendsData();
+        } catch (err) {
+          toast(`⚠ ${err.message}`);
+        }
+      } else if (acceptAccId) {
+        // Open Lead by Example modal
+        pendingLeadRequestId = acceptAccId;
+        leadPartnerName.textContent = acceptAccName;
+        leadPartnerName2.textContent = acceptAccName;
+        leadModal.hidden = false;
+      } else if (declineAccId) {
+        try {
+          const res = await Storage.respondAccountability(declineAccId, false);
+          toast(res.message);
+          refreshFriendsData();
+        } catch (err) {
+          toast(`⚠ ${err.message}`);
+        }
+      }
+    });
+
+    // Lead by Example Modal responses
+    closeLeadModal.addEventListener('click', () => {
+      leadModal.hidden = true;
+    });
+
+    leadModal.addEventListener('click', (e) => {
+      if (e.target === leadModal) leadModal.hidden = true;
+    });
+
+    acceptWithShareBtn.addEventListener('click', async () => {
+      if (!pendingLeadRequestId) return;
+      try {
+        const res = await Storage.respondAccountability(pendingLeadRequestId, true, true);
+        toast(res.message);
+        leadModal.hidden = true;
+        refreshFriendsData();
+      } catch (err) {
+        toast(`⚠ ${err.message}`);
+      }
+    });
+
+    acceptWithoutShareBtn.addEventListener('click', async () => {
+      if (!pendingLeadRequestId) return;
+      try {
+        const res = await Storage.respondAccountability(pendingLeadRequestId, true, false);
+        toast(res.message);
+        leadModal.hidden = true;
+        refreshFriendsData();
+      } catch (err) {
+        toast(`⚠ ${err.message}`);
+      }
+    });
+
+    // Observer Mode logic
+    async function enterObserverMode(targetUserId, username) {
+      try {
+        const res = await Storage.fetchBuddyJournal(targetUserId);
+        myOwnJournal = journal;
+        isObserverMode = true;
+        journal = res.journal || { days: [], meta: {} };
+
+        friendsModal.hidden = true;
+        observerUsername.textContent = username;
+        observerBanner.hidden = false;
+        document.body.classList.add('observer-mode');
+
+        renderAll();
+        resetForm();
+        $('#days').scrollIntoView();
+        toast(`Now viewing @${username}'s journal.`);
+      } catch (err) {
+        toast(`⚠ ${err.message}`);
+      }
+    }
+
+    function exitObserverMode() {
+      if (!isObserverMode) return;
+      isObserverMode = false;
+      journal = myOwnJournal || { days: [], meta: {} };
+      myOwnJournal = null;
+
+      observerBanner.hidden = true;
+      document.body.classList.remove('observer-mode');
+
+      renderAll();
+      resetForm();
+      toast('Returned to your own journal.');
+    }
+
+    exitObserverBtn.addEventListener('click', exitObserverMode);
 
     // Check existing session on boot
     Storage.checkSession().then(() => updateAuthNav());
