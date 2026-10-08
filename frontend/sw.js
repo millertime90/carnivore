@@ -1,4 +1,4 @@
-const CACHE_NAME = 'carnivore-app-v6';
+const CACHE_NAME = 'carnivore-app-v7';
 const ASSETS = [
   './',
   './index.html',

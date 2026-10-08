@@ -10,10 +10,24 @@
   <meta name="apple-mobile-web-app-title" content="Carnivore" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+  <!-- ───────── Top Navigation Bar ───────── -->
+  <nav class="top-bar">
+    <div class="top-bar-inner">
+      <div class="brand">
+        <span class="brand-flame">🥩</span>
+        <span class="brand-name">Carnivore Journey</span>
+      </div>
+      <div class="top-actions">
+        <button class="btn ghost sm friends-btn" id="friendsBtn" type="button">👥 Friends <span class="badge" id="friendsBadge" hidden>0</span></button>
+        <button class="btn ghost sm account-btn" id="authBtn" type="button">👤 Account</button>
+      </div>
+    </div>
+  </nav>
+
   <header class="hero">
     <div class="hero-inner">
       <div>
@@ -29,8 +43,6 @@
       <a href="#pattern">Overall Pattern</a>
       <a href="#summary">Summary</a>
       <a href="#log" class="cta" id="navLogBtn">+ Log a Day</a>
-      <button class="btn ghost sm friends-btn" id="friendsBtn" type="button">👥 Friends <span class="badge" id="friendsBadge" hidden>0</span></button>
-      <button class="btn ghost sm account-btn" id="authBtn" type="button">👤 Account</button>
     </nav>
   </header>
 
@@ -396,13 +408,13 @@
     <option value="Sports"></option>
   </datalist>
 
-  <script src="data.js?v=6"></script>
-  <script src="storage.js?v=6"></script>
-  <script src="app.js?v=6"></script>
+  <script src="data.js?v=7"></script>
+  <script src="storage.js?v=7"></script>
+  <script src="app.js?v=7"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js?v=6').then((reg) => {
+        navigator.serviceWorker.register('sw.js?v=7').then((reg) => {
           reg.update();
         }).catch(() => {});
       });

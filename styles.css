@@ -52,10 +52,33 @@ li + li { margin-top: 0.25rem; }
 .stat.zinc-take b { color: var(--ok); }
 .stat.zinc-skip b { color: var(--warn); }
 
+/* ── Top Navigation Bar ── */
+.top-bar {
+  background: rgba(22, 14, 12, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 80;
+}
+.top-bar-inner {
+  max-width: 1150px; margin: 0 auto; padding: 0.65rem 1.25rem;
+  display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+}
+.brand {
+  display: flex; align-items: center; gap: 0.5rem; text-decoration: none;
+  font-weight: 700; font-size: 1.05rem; color: var(--text); letter-spacing: -0.01em;
+}
+.brand:hover { color: var(--accent-2); }
+.brand-flame { font-size: 1.25rem; line-height: 1; }
+.brand-name { white-space: nowrap; }
+.top-actions {
+  display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;
+}
+
 .tabs {
-  position: sticky; top: 0; z-index: 10;
   display: flex; gap: 0.25rem; overflow-x: auto;
   max-width: 1150px; margin: 0 auto; padding: 0.5rem 1.25rem;
+  -webkit-overflow-scrolling: touch;
 }
 .tabs a {
   color: var(--text); text-decoration: none; padding: 0.45rem 0.85rem; border-radius: 999px;
@@ -264,14 +287,15 @@ textarea { resize: vertical; }
 }
 .toast.show { transform: translateX(-50%) translateY(0); }
 
-/* ── Modal & Auth ── */
-.account-btn { margin-left: 0.5rem; }
+.account-btn {
+  max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7);
-  display: grid; place-items: center; z-index: 100; padding: 1rem;
+  display: grid; place-items: center; z-index: 500; padding: 1rem;
 }
 /* Dialogs that open on top of another modal (e.g. from inside Friends) must stack above it */
-#confirmModal, #leadModal { z-index: 200; }
+#confirmModal, #leadModal { z-index: 600; }
 .modal-backdrop[hidden] { display: none !important; }
 .modal-content {
   width: 100%; max-width: 420px; padding: 1.5rem; position: relative;
@@ -317,7 +341,7 @@ textarea { resize: vertical; }
 
 /* ── Observer Mode Banner ── */
 .observer-banner {
-  position: sticky; top: 0; z-index: 90;
+  position: sticky; top: 48px; z-index: 75;
   background: linear-gradient(90deg, #6e320f, #9c4b1a);
   border-bottom: 2px solid var(--accent-2);
   color: #fff; padding: 0.65rem 1.25rem; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
@@ -376,5 +400,16 @@ body.observer-mode [data-edit], body.observer-mode [data-del] { display: none !i
 body.observer-mode #editPattern, body.observer-mode #editSummary, body.observer-mode #resetAutoSummary { display: none !important; }
 body.observer-mode .footer-actions { display: none !important; }
 body.observer-mode #navLogBtn { display: none !important; }
+
+/* ── Responsive Mobile Optimizations ── */
+@media (max-width: 600px) {
+  .hero-inner { padding: 1.25rem 1rem 1rem; }
+  .top-bar-inner { padding: 0.5rem 0.85rem; }
+  .brand-name { font-size: 0.95rem; }
+  .top-actions { gap: 0.35rem; }
+  .top-actions .btn.sm { padding: 0.35rem 0.55rem; font-size: 0.82rem; }
+  .account-btn { max-width: 105px; }
+  .tabs { padding: 0.5rem 0.85rem; }
+}
 
 
