@@ -1332,6 +1332,10 @@
       e.preventDefault();
       const username = $('#addFriendUsername').value.trim();
       if (!username) return;
+      const submitBtn = addFriendForm.querySelector('button[type="submit"]');
+      const originalLabel = submitBtn.textContent;
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Sending…';
       try {
         const res = await Storage.sendFriendRequest(username);
         toast(res.message);
@@ -1340,6 +1344,9 @@
         refreshFriendsData();
       } catch (err) {
         toast(`⚠ ${err.message}`);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalLabel;
       }
     });
 

@@ -260,7 +260,7 @@ textarea { resize: vertical; }
 .toast {
   position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%) translateY(150%);
   background: var(--card-2); border: 1px solid var(--accent); color: var(--text);
-  padding: 0.7rem 1.1rem; border-radius: 10px; box-shadow: var(--shadow); transition: transform 0.25s; z-index: 50;
+  padding: 0.7rem 1.1rem; border-radius: 10px; box-shadow: var(--shadow); transition: transform 0.25s; z-index: 300;
 }
 .toast.show { transform: translateX(-50%) translateY(0); }
 
@@ -270,6 +270,8 @@ textarea { resize: vertical; }
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7);
   display: grid; place-items: center; z-index: 100; padding: 1rem;
 }
+/* Dialogs that open on top of another modal (e.g. from inside Friends) must stack above it */
+#confirmModal, #leadModal { z-index: 200; }
 .modal-backdrop[hidden] { display: none !important; }
 .modal-content {
   width: 100%; max-width: 420px; padding: 1.5rem; position: relative;
