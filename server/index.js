@@ -1,12 +1,13 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const db = require('./db');
 const {
+  authenticateToken,
   signupManual,
   loginManual,
   authenticateGoogle,
-  authenticateToken,
 } = require('./auth');
 const {
   sendFriendRequest,
@@ -22,24 +23,26 @@ const {
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Enable CORS for frontend running locally or on GitHub Pages
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// Enable CORS for frontend clients (GitHub Pages, localhost)
+app.use(
+  cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
-// Serve static frontend files directly from the parent directory
-const path = require('path');
+// Serve static frontend files if hosted together
 app.use(express.static(path.join(__dirname, '..')));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: 'auth-fix-2',
+    database: process.env.TURSO_DATABASE_URL ? 'turso' : 'local-sqlite',
+    version: 'turso-cloud-v1',
     uptimeSeconds: Math.round(process.uptime()),
     commit: process.env.RENDER_GIT_COMMIT || 'local',
     timestamp: new Date().toISOString(),
@@ -49,10 +52,10 @@ app.get('/api/health', (req, res) => {
 // ───────── Authentication Endpoints ─────────
 
 // 1. Manual Signup (username + password)
-app.post('/api/auth/signup', (req, res) => {
+app.post('/api/auth/signup', async (req, res) => {
   try {
     const { username, password, email } = req.body;
-    const result = signupManual(username, password, email);
+    const result = await signupManual(username, password, email);
     res.status(201).json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -60,10 +63,10 @@ app.post('/api/auth/signup', (req, res) => {
 });
 
 // 2. Manual Login (username/email + password)
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    const result = loginManual(username, password);
+    const result = await loginManual(username, password);
     res.json(result);
   } catch (err) {
     res.status(401).json({ error: err.message });
@@ -71,7 +74,6 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // 3. Google Sign-In / Signup
-// Supports passing customUsername if the user opts to customize their handle on signup
 app.post('/api/auth/google', async (req, res) => {
   try {
     const { credential, customUsername } = req.body;
@@ -86,55 +88,61 @@ app.post('/api/auth/google', async (req, res) => {
 });
 
 // 4. Get Current User Info (verifies active JWT token)
-app.get('/api/auth/me', authenticateToken, (req, res) => {
-  const user = db.prepare('SELECT id, username, email, avatar_url, created_at FROM users WHERE id = ?').get(req.user.id);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+  try {
+    const user = await db.get('SELECT id, username, email, avatar_url, created_at FROM users WHERE id = ?', [req.user.id]);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  res.json({ user });
 });
 
 // ───────── User Journal Sync Endpoints ─────────
 
 // Get User's Journal
-app.get('/api/journal', authenticateToken, (req, res) => {
-  const row = db.prepare('SELECT journal_data, updated_at FROM user_journals WHERE user_id = ?').get(req.user.id);
-  if (!row) {
-    return res.json({ journal: null });
-  }
+app.get('/api/journal', authenticateToken, async (req, res) => {
   try {
+    const row = await db.get('SELECT journal_data, updated_at FROM user_journals WHERE user_id = ?', [req.user.id]);
+    if (!row) {
+      return res.json({ journal: null });
+    }
     res.json({ journal: JSON.parse(row.journal_data), updatedAt: row.updated_at });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to parse journal data' });
+    res.status(500).json({ error: 'Failed to retrieve journal data' });
   }
 });
 
 // Save / Sync User's Entire Journal
-app.put('/api/journal', authenticateToken, (req, res) => {
+app.put('/api/journal', authenticateToken, async (req, res) => {
   const journalData = req.body;
   if (!journalData || typeof journalData !== 'object') {
     return res.status(400).json({ error: 'Invalid journal payload' });
   }
 
-  const jsonStr = JSON.stringify(journalData);
-  const stmt = db.prepare(`
-    INSERT INTO user_journals (user_id, journal_data, updated_at)
-    VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(user_id) DO UPDATE SET
-      journal_data = excluded.journal_data,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-
-  stmt.run(req.user.id, jsonStr);
-  res.json({ success: true, message: 'Journal synced successfully' });
+  try {
+    const jsonStr = JSON.stringify(journalData);
+    await db.run(`
+      INSERT INTO user_journals (user_id, journal_data, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id) DO UPDATE SET
+        journal_data = excluded.journal_data,
+        updated_at = CURRENT_TIMESTAMP
+    `, [req.user.id, jsonStr]);
+    res.json({ success: true, message: 'Journal synced successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ───────── Friends & Social Endpoints ─────────
 
 // Get Friends & Requests Overview
-app.get('/api/friends', authenticateToken, (req, res) => {
+app.get('/api/friends', authenticateToken, async (req, res) => {
   try {
-    const data = getFriendsOverview(req.user.id);
+    const data = await getFriendsOverview(req.user.id);
     res.json(data);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -142,10 +150,10 @@ app.get('/api/friends', authenticateToken, (req, res) => {
 });
 
 // Send Friend Request
-app.post('/api/friends/request', authenticateToken, (req, res) => {
+app.post('/api/friends/request', authenticateToken, async (req, res) => {
   try {
     const { username } = req.body;
-    const result = sendFriendRequest(req.user.id, username);
+    const result = await sendFriendRequest(req.user.id, username);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -153,10 +161,10 @@ app.post('/api/friends/request', authenticateToken, (req, res) => {
 });
 
 // Respond to Friend Request (accept or decline)
-app.put('/api/friends/:id/respond', authenticateToken, (req, res) => {
+app.put('/api/friends/:id/respond', authenticateToken, async (req, res) => {
   try {
     const { accept } = req.body;
-    const result = respondFriendRequest(req.user.id, req.params.id, Boolean(accept));
+    const result = await respondFriendRequest(req.user.id, req.params.id, Boolean(accept));
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -164,9 +172,9 @@ app.put('/api/friends/:id/respond', authenticateToken, (req, res) => {
 });
 
 // Remove Friend
-app.delete('/api/friends/:friendUserId', authenticateToken, (req, res) => {
+app.delete('/api/friends/:friendUserId', authenticateToken, async (req, res) => {
   try {
-    const result = removeFriend(req.user.id, req.params.friendUserId);
+    const result = await removeFriend(req.user.id, req.params.friendUserId);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -176,10 +184,10 @@ app.delete('/api/friends/:friendUserId', authenticateToken, (req, res) => {
 // ───────── Accountability Endpoints ─────────
 
 // Send Accountability Request
-app.post('/api/accountability/request', authenticateToken, (req, res) => {
+app.post('/api/accountability/request', authenticateToken, async (req, res) => {
   try {
     const { friendUsername } = req.body;
-    const result = sendAccountabilityRequest(req.user.id, friendUsername);
+    const result = await sendAccountabilityRequest(req.user.id, friendUsername);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -187,10 +195,10 @@ app.post('/api/accountability/request', authenticateToken, (req, res) => {
 });
 
 // Respond to Accountability Request (accept or decline, with shareBack)
-app.put('/api/accountability/:id/respond', authenticateToken, (req, res) => {
+app.put('/api/accountability/:id/respond', authenticateToken, async (req, res) => {
   try {
     const { accept, shareBack } = req.body;
-    const result = respondAccountabilityRequest(req.user.id, req.params.id, Boolean(accept), Boolean(shareBack));
+    const result = await respondAccountabilityRequest(req.user.id, req.params.id, Boolean(accept), Boolean(shareBack));
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -198,9 +206,9 @@ app.put('/api/accountability/:id/respond', authenticateToken, (req, res) => {
 });
 
 // End Accountability Partnership
-app.delete('/api/accountability/:id', authenticateToken, (req, res) => {
+app.delete('/api/accountability/:id', authenticateToken, async (req, res) => {
   try {
-    const result = removeAccountabilityPartnership(req.user.id, req.params.id);
+    const result = await removeAccountabilityPartnership(req.user.id, req.params.id);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -208,17 +216,25 @@ app.delete('/api/accountability/:id', authenticateToken, (req, res) => {
 });
 
 // Get Buddy's Full Journal (Access-Controlled)
-app.get('/api/accountability/journal/:targetUserId', authenticateToken, (req, res) => {
+app.get('/api/accountability/journal/:targetUserId', authenticateToken, async (req, res) => {
   try {
-    const data = getBuddyJournal(req.user.id, req.params.targetUserId);
+    const data = await getBuddyJournal(req.user.id, req.params.targetUserId);
     res.json(data);
   } catch (err) {
     res.status(403).json({ error: err.message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🥩 Carnivore backend server running on http://localhost:${PORT}`);
-});
+// Initialize database tables and start listening
+db.initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`🥩 Carnivore backend server running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to initialize database tables:', err);
+    process.exit(1);
+  });
 
 module.exports = app;

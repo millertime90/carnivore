@@ -44,13 +44,12 @@ function sanitizeUsername(input) {
 }
 
 // Ensure username is unique by appending random numbers if already taken
-function getAvailableUsername(baseUsername) {
+async function getAvailableUsername(baseUsername) {
   let clean = sanitizeUsername(baseUsername) || 'carnivore_user';
   let candidate = clean;
   let suffix = 1;
 
-  const checkStmt = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)');
-  while (checkStmt.get(candidate)) {
+  while (await db.get('SELECT id FROM users WHERE LOWER(username) = LOWER(?)', [candidate])) {
     candidate = `${clean}_${suffix}`;
     suffix++;
   }
@@ -60,7 +59,7 @@ function getAvailableUsername(baseUsername) {
 // ───────── Manual Authentication ─────────
 
 // Manual Signup: username + password (optional email)
-function signupManual(username, password, email = null) {
+async function signupManual(username, password, email = null) {
   if (!username || !username.trim()) {
     throw new Error('Username is required');
   }
@@ -71,14 +70,14 @@ function signupManual(username, password, email = null) {
   const cleanUsername = username.trim();
 
   // Check if username already exists
-  const existingUser = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(cleanUsername);
+  const existingUser = await db.get('SELECT id FROM users WHERE LOWER(username) = LOWER(?)', [cleanUsername]);
   if (existingUser) {
     throw new Error('Username is already taken');
   }
 
   // Check email if provided
   if (email && email.trim()) {
-    const existingEmail = db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(email.trim());
+    const existingEmail = await db.get('SELECT id FROM users WHERE LOWER(email) = LOWER(?)', [email.trim()]);
     if (existingEmail) {
       throw new Error('Email is already registered');
     }
@@ -87,12 +86,10 @@ function signupManual(username, password, email = null) {
   const id = crypto.randomUUID();
   const passwordHash = bcrypt.hashSync(password, 10);
 
-  const insert = db.prepare(`
-    INSERT INTO users (id, username, email, password_hash)
-    VALUES (?, ?, ?, ?)
-  `);
-
-  insert.run(id, cleanUsername, email ? email.trim() : null, passwordHash);
+  await db.run(
+    'INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)',
+    [id, cleanUsername, email ? email.trim() : null, passwordHash]
+  );
 
   const user = { id, username: cleanUsername, email: email ? email.trim() : null };
   const token = generateToken(user);
@@ -100,16 +97,16 @@ function signupManual(username, password, email = null) {
 }
 
 // Manual Login: username + password
-function loginManual(usernameOrEmail, password) {
+async function loginManual(usernameOrEmail, password) {
   if (!usernameOrEmail || !password) {
     throw new Error('Username and password are required');
   }
 
   const query = usernameOrEmail.trim();
-  const user = db.prepare(`
-    SELECT * FROM users 
-    WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)
-  `).get(query, query);
+  const user = await db.get(
+    'SELECT * FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)',
+    [query, query]
+  );
 
   if (!user || !user.password_hash) {
     throw new Error('Invalid username or password');
@@ -171,15 +168,17 @@ async function authenticateGoogle(credential, customUsername = null) {
   const avatarUrl = payload.picture || null;
 
   // 1. Check if user already exists by google_id
-  let existingUser = db.prepare('SELECT * FROM users WHERE google_id = ?').get(googleId);
+  let existingUser = await db.get('SELECT * FROM users WHERE google_id = ?', [googleId]);
 
   // 2. If not found by google_id, check by email
   if (!existingUser && email) {
-    existingUser = db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email);
+    existingUser = await db.get('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [email]);
     if (existingUser) {
       // Link Google ID to existing account
-      db.prepare('UPDATE users SET google_id = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?')
-        .run(googleId, avatarUrl, existingUser.id);
+      await db.run(
+        'UPDATE users SET google_id = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?',
+        [googleId, avatarUrl, existingUser.id]
+      );
       existingUser.google_id = googleId;
     }
   }
@@ -202,9 +201,10 @@ async function authenticateGoogle(credential, customUsername = null) {
   // 3. New User Flow
   // If no customUsername provided, this is a check / preview step before confirming username
   if (!customUsername) {
+    const suggestedUsername = await getAvailableUsername(googleName);
     return {
       isNewUser: true,
-      suggestedUsername: getAvailableUsername(googleName),
+      suggestedUsername,
       googleName,
       email,
       avatarUrl,
@@ -213,16 +213,16 @@ async function authenticateGoogle(credential, customUsername = null) {
 
   // User confirmed their username choice
   const requested = customUsername.trim();
-  const taken = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(requested);
+  const taken = await db.get('SELECT id FROM users WHERE LOWER(username) = LOWER(?)', [requested]);
   if (taken) {
     throw new Error(`Username "${requested}" is already taken. Please choose another.`);
   }
 
   const id = crypto.randomUUID();
-  db.prepare(`
-    INSERT INTO users (id, username, email, google_id, avatar_url)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, requested, email, googleId, avatarUrl);
+  await db.run(
+    'INSERT INTO users (id, username, email, google_id, avatar_url) VALUES (?, ?, ?, ?, ?)',
+    [id, requested, email, googleId, avatarUrl]
+  );
 
   const newUser = { id, username: requested, email, avatar_url: avatarUrl };
   const token = generateToken(newUser);

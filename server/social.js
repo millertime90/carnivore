@@ -2,22 +2,22 @@ const crypto = require('crypto');
 const db = require('./db');
 
 // Helper to get user by username
-function getUserByUsername(username) {
+async function getUserByUsername(username) {
   if (!username) return null;
-  return db.prepare('SELECT id, username, email, avatar_url FROM users WHERE LOWER(username) = LOWER(?)').get(username.trim());
+  return await db.get('SELECT id, username, email, avatar_url FROM users WHERE LOWER(username) = LOWER(?)', [username.trim()]);
 }
 
 // Helper to get user by id
-function getUserById(id) {
+async function getUserById(id) {
   if (!id) return null;
-  return db.prepare('SELECT id, username, email, avatar_url FROM users WHERE id = ?').get(id);
+  return await db.get('SELECT id, username, email, avatar_url FROM users WHERE id = ?', [id]);
 }
 
 // ───────── Friends Logic ─────────
 
 // Send friend request
-function sendFriendRequest(requesterId, targetUsername) {
-  const targetUser = getUserByUsername(targetUsername);
+async function sendFriendRequest(requesterId, targetUsername) {
+  const targetUser = await getUserByUsername(targetUsername);
   if (!targetUser) {
     throw new Error(`User "${targetUsername}" does not exist.`);
   }
@@ -26,10 +26,10 @@ function sendFriendRequest(requesterId, targetUsername) {
     throw new Error('You cannot add yourself as a friend.');
   }
 
-  const existing = db.prepare(`
+  const existing = await db.get(`
     SELECT * FROM friends 
     WHERE (user_id_1 = ? AND user_id_2 = ?) OR (user_id_1 = ? AND user_id_2 = ?)
-  `).get(requesterId, targetUser.id, targetUser.id, requesterId);
+  `, [requesterId, targetUser.id, targetUser.id, requesterId]);
 
   if (existing) {
     if (existing.status === 'accepted') {
@@ -40,39 +40,42 @@ function sendFriendRequest(requesterId, targetUsername) {
         throw new Error(`A friend request to ${targetUser.username} is already pending.`);
       } else {
         // Automatically accept if the other person already sent a request to you
-        db.prepare("UPDATE friends SET status = 'accepted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(existing.id);
+        await db.run("UPDATE friends SET status = 'accepted', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [existing.id]);
         return { message: `Accepted incoming friend request from ${targetUser.username}!`, friendship: existing };
       }
     }
   }
 
   const id = crypto.randomUUID();
-  db.prepare(`
+  await db.run(`
     INSERT INTO friends (id, user_id_1, user_id_2, status, requester_id)
     VALUES (?, ?, ?, 'pending', ?)
-  `).run(id, requesterId, targetUser.id, requesterId);
+  `, [id, requesterId, targetUser.id, requesterId]);
 
   return { message: `Friend request sent to ${targetUser.username}.`, id };
 }
 
 // Get overview of friends and pending requests
-function getFriendsOverview(userId) {
+async function getFriendsOverview(userId) {
   // Accepted friends
-  const acceptedRows = db.prepare(`
+  const acceptedRows = await db.all(`
     SELECT f.id AS friendship_id, f.created_at,
            CASE WHEN f.user_id_1 = ? THEN f.user_id_2 ELSE f.user_id_1 END AS friend_id
     FROM friends f
     WHERE (f.user_id_1 = ? OR f.user_id_2 = ?) AND f.status = 'accepted'
-  `).all(userId, userId, userId);
+  `, [userId, userId, userId]);
 
-  const friends = acceptedRows.map((row) => {
-    const friend = getUserById(row.friend_id);
-    // Also check accountability partnership with this friend
-    const partnership = db.prepare(`
+  const friends = [];
+  for (const row of acceptedRows) {
+    const friend = await getUserById(row.friend_id);
+    if (!friend) continue;
+
+    // Check accountability partnership with this friend
+    const partnership = await db.get(`
       SELECT * FROM accountability_partnerships
       WHERE ((requester_id = ? AND partner_id = ?) OR (requester_id = ? AND partner_id = ?))
         AND status IN ('pending', 'accepted')
-    `).get(userId, row.friend_id, row.friend_id, userId);
+    `, [userId, row.friend_id, row.friend_id, userId]);
 
     let accountabilityStatus = null;
     let canViewJournal = false;
@@ -84,9 +87,6 @@ function getFriendsOverview(userId) {
         accountabilityStatus = partnership.requester_id === userId ? 'request_sent' : 'request_received';
       } else if (partnership.status === 'accepted') {
         accountabilityStatus = 'active';
-        // Can current user view friend's journal?
-        // Yes if: Friend is the requester (friend asked current user to monitor)
-        // OR: Current user is the requester AND friend opted partner_shares_back = 1
         if (partnership.requester_id === row.friend_id) {
           canViewJournal = true;
         } else if (partnership.partner_shares_back === 1) {
@@ -95,7 +95,7 @@ function getFriendsOverview(userId) {
       }
     }
 
-    return {
+    friends.push({
       friendshipId: row.friendship_id,
       id: friend.id,
       username: friend.username,
@@ -103,24 +103,24 @@ function getFriendsOverview(userId) {
       accountabilityStatus,
       canViewJournal,
       partnershipId,
-    };
-  });
+    });
+  }
 
   // Incoming friend requests
-  const incomingRows = db.prepare(`
+  const incomingRows = await db.all(`
     SELECT f.id, f.created_at, u.id AS requester_id, u.username, u.avatar_url
     FROM friends f
     JOIN users u ON u.id = f.requester_id
     WHERE (f.user_id_1 = ? OR f.user_id_2 = ?) AND f.requester_id != ? AND f.status = 'pending'
-  `).all(userId, userId, userId);
+  `, [userId, userId, userId]);
 
   // Incoming accountability requests
-  const incomingAccountabilityRows = db.prepare(`
+  const incomingAccountabilityRows = await db.all(`
     SELECT ap.id, ap.created_at, u.id AS requester_id, u.username, u.avatar_url
     FROM accountability_partnerships ap
     JOIN users u ON u.id = ap.requester_id
     WHERE ap.partner_id = ? AND ap.status = 'pending'
-  `).all(userId);
+  `, [userId]);
 
   return {
     friends,
@@ -130,37 +130,37 @@ function getFriendsOverview(userId) {
 }
 
 // Respond to friend request (accept or decline)
-function respondFriendRequest(userId, friendshipId, accept) {
-  const rel = db.prepare(`
+async function respondFriendRequest(userId, friendshipId, accept) {
+  const rel = await db.get(`
     SELECT * FROM friends 
     WHERE id = ? AND (user_id_1 = ? OR user_id_2 = ?) AND requester_id != ? AND status = 'pending'
-  `).get(friendshipId, userId, userId, userId);
+  `, [friendshipId, userId, userId, userId]);
 
   if (!rel) {
     throw new Error('Friend request not found or not authorized.');
   }
 
   if (accept) {
-    db.prepare("UPDATE friends SET status = 'accepted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(friendshipId);
+    await db.run("UPDATE friends SET status = 'accepted', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [friendshipId]);
     return { message: 'Friend request accepted!' };
   } else {
-    db.prepare('DELETE FROM friends WHERE id = ?').run(friendshipId);
+    await db.run('DELETE FROM friends WHERE id = ?', [friendshipId]);
     return { message: 'Friend request declined.' };
   }
 }
 
 // Remove friend
-function removeFriend(userId, friendUserId) {
-  db.prepare(`
+async function removeFriend(userId, friendUserId) {
+  await db.run(`
     DELETE FROM friends 
     WHERE (user_id_1 = ? AND user_id_2 = ?) OR (user_id_1 = ? AND user_id_2 = ?)
-  `).run(userId, friendUserId, friendUserId, userId);
+  `, [userId, friendUserId, friendUserId, userId]);
 
   // Also clean up any accountability partnerships between them
-  db.prepare(`
+  await db.run(`
     DELETE FROM accountability_partnerships
     WHERE (requester_id = ? AND partner_id = ?) OR (requester_id = ? AND partner_id = ?)
-  `).run(userId, friendUserId, friendUserId, userId);
+  `, [userId, friendUserId, friendUserId, userId]);
 
   return { message: 'Friend removed.' };
 }
@@ -168,8 +168,8 @@ function removeFriend(userId, friendUserId) {
 // ───────── Accountability Logic ─────────
 
 // Send accountability buddy request
-function sendAccountabilityRequest(requesterId, friendUsername) {
-  const friend = getUserByUsername(friendUsername);
+async function sendAccountabilityRequest(requesterId, friendUsername) {
+  const friend = await getUserByUsername(friendUsername);
   if (!friend) {
     throw new Error(`User "${friendUsername}" does not exist.`);
   }
@@ -179,21 +179,21 @@ function sendAccountabilityRequest(requesterId, friendUsername) {
   }
 
   // Must be accepted friends first
-  const isFriend = db.prepare(`
+  const isFriend = await db.get(`
     SELECT * FROM friends 
     WHERE ((user_id_1 = ? AND user_id_2 = ?) OR (user_id_1 = ? AND user_id_2 = ?))
       AND status = 'accepted'
-  `).get(requesterId, friend.id, friend.id, requesterId);
+  `, [requesterId, friend.id, friend.id, requesterId]);
 
   if (!isFriend) {
     throw new Error(`You must be friends with ${friend.username} before requesting accountability.`);
   }
 
   // Check existing partnership
-  const existing = db.prepare(`
+  const existing = await db.get(`
     SELECT * FROM accountability_partnerships
     WHERE (requester_id = ? AND partner_id = ?) OR (requester_id = ? AND partner_id = ?)
-  `).get(requesterId, friend.id, friend.id, requesterId);
+  `, [requesterId, friend.id, friend.id, requesterId]);
 
   if (existing) {
     if (existing.status === 'accepted') {
@@ -205,20 +205,20 @@ function sendAccountabilityRequest(requesterId, friendUsername) {
   }
 
   const id = crypto.randomUUID();
-  db.prepare(`
+  await db.run(`
     INSERT INTO accountability_partnerships (id, requester_id, partner_id, status, partner_shares_back)
     VALUES (?, ?, ?, 'pending', 0)
-  `).run(id, requesterId, friend.id);
+  `, [id, requesterId, friend.id]);
 
   return { message: `Accountability request sent to ${friend.username}.`, id };
 }
 
 // Respond to accountability request
-function respondAccountabilityRequest(partnerUserId, requestId, accept, shareBack = false) {
-  const req = db.prepare(`
+async function respondAccountabilityRequest(partnerUserId, requestId, accept, shareBack = false) {
+  const req = await db.get(`
     SELECT * FROM accountability_partnerships 
     WHERE id = ? AND partner_id = ? AND status = 'pending'
-  `).get(requestId, partnerUserId);
+  `, [requestId, partnerUserId]);
 
   if (!req) {
     throw new Error('Accountability request not found or not authorized.');
@@ -226,11 +226,11 @@ function respondAccountabilityRequest(partnerUserId, requestId, accept, shareBac
 
   if (accept) {
     const shareBackFlag = shareBack ? 1 : 0;
-    db.prepare(`
+    await db.run(`
       UPDATE accountability_partnerships 
       SET status = 'accepted', partner_shares_back = ?, updated_at = CURRENT_TIMESTAMP 
       WHERE id = ?
-    `).run(shareBackFlag, requestId);
+    `, [shareBackFlag, requestId]);
 
     return { 
       message: shareBack 
@@ -239,55 +239,51 @@ function respondAccountabilityRequest(partnerUserId, requestId, accept, shareBac
       partnerSharesBack: Boolean(shareBackFlag)
     };
   } else {
-    db.prepare('DELETE FROM accountability_partnerships WHERE id = ?').run(requestId);
+    await db.run('DELETE FROM accountability_partnerships WHERE id = ?', [requestId]);
     return { message: 'Accountability request declined.' };
   }
 }
 
 // Remove accountability partnership
-function removeAccountabilityPartnership(userId, partnershipId) {
-  const partnership = db.prepare(`
+async function removeAccountabilityPartnership(userId, partnershipId) {
+  const partnership = await db.get(`
     SELECT * FROM accountability_partnerships 
     WHERE id = ? AND (requester_id = ? OR partner_id = ?)
-  `).get(partnershipId, userId, userId);
+  `, [partnershipId, userId, userId]);
 
   if (!partnership) {
     throw new Error('Accountability partnership not found.');
   }
 
-  db.prepare('DELETE FROM accountability_partnerships WHERE id = ?').run(partnershipId);
+  await db.run('DELETE FROM accountability_partnerships WHERE id = ?', [partnershipId]);
   return { message: 'Accountability partnership ended.' };
 }
 
 // Fetch buddy's journal with strict authorization check
-function getBuddyJournal(viewerUserId, targetUserId) {
+async function getBuddyJournal(viewerUserId, targetUserId) {
   if (viewerUserId === targetUserId) {
     throw new Error('Use the main journal endpoint for your own logs.');
   }
 
-  // Check authorization:
-  // Viewer can view Target's journal if:
-  // Case A: Target requested Viewer for accountability (status = 'accepted')
-  // Case B: Viewer requested Target for accountability, AND Target agreed partner_shares_back = 1
-  const authPartner = db.prepare(`
+  const authPartner = await db.get(`
     SELECT * FROM accountability_partnerships
     WHERE status = 'accepted' AND (
       (requester_id = ? AND partner_id = ?)
       OR
       (requester_id = ? AND partner_id = ? AND partner_shares_back = 1)
     )
-  `).get(targetUserId, viewerUserId, viewerUserId, targetUserId);
+  `, [targetUserId, viewerUserId, viewerUserId, targetUserId]);
 
   if (!authPartner) {
     throw new Error('You do not have permission to view this user’s journal.');
   }
 
-  const targetUser = getUserById(targetUserId);
+  const targetUser = await getUserById(targetUserId);
   if (!targetUser) {
     throw new Error('Target user not found.');
   }
 
-  const journalRow = db.prepare('SELECT journal_data, updated_at FROM user_journals WHERE user_id = ?').get(targetUserId);
+  const journalRow = await db.get('SELECT journal_data, updated_at FROM user_journals WHERE user_id = ?', [targetUserId]);
   let journal = null;
   if (journalRow && journalRow.journal_data) {
     try {
